@@ -67,7 +67,7 @@ def main():
     # Use Google Gemini by default (FREE tier: 1500 requests/day)
     # Set GOOGLE_API_KEY env var (get free key from https://aistudio.google.com/apikey)
     # Override with LITELLM_MODEL env var for different models
-    model_name = os.environ.get("LITELLM_MODEL", "gemini/gemini-1.5-flash")
+    model_name = os.environ.get("LITELLM_MODEL", "gemini/gemini-1.5-pro")
     
     script_writer = ScriptWriterAgent("ScriptWriter", config={"model_name": model_name})
     script_critique = ScriptCritiqueAgent("ScriptCritique", config={"model_name": model_name})
