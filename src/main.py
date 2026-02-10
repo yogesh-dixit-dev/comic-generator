@@ -64,9 +64,9 @@ def main():
 
     # 3. Initialize Agents
     input_reader = InputReaderAgent("InputReader")
-    # Use gpt-4o-mini by default (broader access, more cost-effective)
+    # Use gpt-3.5-turbo by default (universal access, most cost-effective)
     # Override with LITELLM_MODEL env var for different models
-    model_name = os.environ.get("LITELLM_MODEL", "gpt-4o-mini")
+    model_name = os.environ.get("LITELLM_MODEL", "gpt-3.5-turbo")
     
     script_writer = ScriptWriterAgent("ScriptWriter", config={"model_name": model_name})
     script_critique = ScriptCritiqueAgent("ScriptCritique", config={"model_name": model_name})

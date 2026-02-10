@@ -20,11 +20,11 @@ A modular, agent-based system for converting text (novels, stories, scripts) int
     ```bash
     OPENAI_API_KEY=your_key_here
     
-    # Optional: Override the default model (gpt-4o-mini)
+    # Optional: Override the default model (gpt-3.5-turbo)
     # Examples:
-    # LITELLM_MODEL=gpt-4o          # Requires tier 1+ OpenAI access
-    # LITELLM_MODEL=gpt-3.5-turbo   # Most accessible
-    # LITELLM_MODEL=ollama/llama3   # Local inference with Ollama
+    # LITELLM_MODEL=gpt-4o-mini      # Better quality but needs project access
+    # LITELLM_MODEL=gpt-4o           # Best quality, requires tier 1+ access
+    # LITELLM_MODEL=ollama/llama3    # Local inference with Ollama
     ```
 
 ## Usage
