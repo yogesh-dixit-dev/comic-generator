@@ -77,42 +77,40 @@ class JSONResilienceAgent:
         Generates a recursive, deep JSON skeleton from a Pydantic model.
         Resolves nested models to provide a complete template.
         """
-        from typing import get_origin, get_args
-
-        def _get_default_val(field_type: Any) -> Any:
-            origin = get_origin(field_type)
-            if origin is list:
-                args = get_args(field_type)
-                if args and self._is_pydantic_base(args[0]):
-                    return [self._build_obj(self._get_base_model(args[0]))]
-                return ["..."]
-            
-            if self._is_pydantic_base(field_type):
-                return self._build_obj(self._get_base_model(field_type))
-            
-            # Use base type if available
-            base_type = origin or field_type
-            if base_type is int: return 1
-            if base_type in (float, complex): return 0.0
-            if base_type is bool: return True
-            return "..."
-
         skeleton_dict = self._build_obj(schema)
         return json.dumps(skeleton_dict, indent=2)
 
     def _build_obj(self, model: Type[BaseModel]) -> Dict[str, Any]:
+        """Recursively builds a template object for a Pydantic model."""
         obj = {}
-        for name, field in model.model_fields.items():
-            # In generate_deep_skeleton, we need a local-ish _get_default_val or just inline it
-            # To keep it clean, let's just make it a call back to a more robust helper if needed.
-            # Simplified for now to avoid circularity in local defs.
-            origin = getattr(field.annotation, "__origin__", None)
+        target_fields = model.model_fields
+        
+        for name, field in target_fields.items():
+            field_type = field.annotation
+            
+            # 1. Handle List Types
+            origin = get_origin(field_type)
             if origin is list:
-                obj[name] = []
-            elif isinstance(field.annotation, type) and issubclass(field.annotation, BaseModel):
-                obj[name] = {} # Stub for shallow skeletons
-            else:
-                obj[name] = "..."
+                inner_args = get_args(field_type)
+                if inner_args and self._is_pydantic_base(inner_args[0]):
+                    obj[name] = [self._build_obj(self._get_base_model(inner_args[0]))]
+                else:
+                    obj[name] = ["..."]
+                continue
+            
+            # 2. Handle Nested Pydantic Models
+            if self._is_pydantic_base(field_type):
+                obj[name] = self._build_obj(self._get_base_model(field_type))
+                continue
+            
+            # 3. Handle Primitive Fallbacks
+            base_type = origin or field_type
+            if base_type is int: obj[name] = 1
+            elif base_type in (float, complex): obj[name] = 0.0
+            elif base_type is bool: obj[name] = True
+            elif base_type is str: obj[name] = "..."
+            else: obj[name] = "..."
+            
         return obj
 
     def repair_json(self, raw_json: str, schema: Type[T]) -> Any:

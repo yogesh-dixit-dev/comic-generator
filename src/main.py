@@ -199,7 +199,7 @@ def main():
             # Illustrator generates images
             for panel in scene_plan.panels:
                 logger.info(f"🎨 Illustrating Panel {panel.id}...")
-                illustrator.run(panel)
+                illustrator.run(panel, characters=characters)
             
             # Step 6: Layout & Lettering (Per Scene for now, or Per Page)
             logger.info(f"📐 Assembling Scene {scene.id}...")
