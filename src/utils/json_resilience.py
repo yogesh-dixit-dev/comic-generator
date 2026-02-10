@@ -21,6 +21,7 @@ class JSONResilienceAgent:
             "scene_id": "id",
             "scene_number": "id",
             "location_name": "location",
+            "setting": "location",
             "character_name": "name",
             "char_name": "name",
             "visual_description": "description",
@@ -28,6 +29,7 @@ class JSONResilienceAgent:
             "narrative": "narrative_summary",
             "text": "narrative_summary",
             "summary": "narrative_summary",
+            "scene": "narrative_summary",
             "dialog": "dialogue",
             "script_title": "title",
             "story_synopsis": "synopsis"
@@ -152,12 +154,20 @@ class JSONResilienceAgent:
                                 return [_align_fields(item, self._get_base_model(args[0])) for item in val]
                             
                             # Heuristic: Repair Dialogue Hallucination
-                            # If we expect List[BaseModel] (like Panel.dialogue) but get List[str]
-                            if args and self._is_pydantic_base(args[0]) and isinstance(val, list):
-                                # If the target model has 'speaker' and 'text' fields, we can repair it
-                                base_model = self._get_base_model(args[0])
-                                fields = base_model.model_fields
-                                if "speaker" in fields and "text" in fields:
+                            # If we expect List[BaseModel] or List[Dict] (like Panel.dialogue) but get List[str]
+                            is_dict = False
+                            try: is_dict = issubclass(args[0], dict)
+                            except: pass
+
+                            if args and (self._is_pydantic_base(args[0]) or is_dict) and isinstance(val, list):
+                                # If the target looks like a dialogue item (via dict keys or model fields)
+                                target_fields = []
+                                if is_dict:
+                                    target_fields = ["speaker", "text"]
+                                else:
+                                    target_fields = self._get_base_model(args[0]).model_fields
+                                
+                                if "speaker" in target_fields and "text" in target_fields:
                                     repaired_list = []
                                     for item in val:
                                         if isinstance(item, str):
@@ -169,7 +179,9 @@ class JSONResilienceAgent:
                                         else:
                                             repaired_list.append(item)
                                     return repaired_list
-                                return [_align_fields(item, base_model) for item in val]
+                                
+                                if not is_dict:
+                                    return [_align_fields(item, self._get_base_model(args[0])) for item in val]
                         return val
 
                     # Heuristic for INT fields (like 'id' or 'panel_id')
@@ -177,9 +189,17 @@ class JSONResilienceAgent:
                         origin = get_origin(field_info.annotation)
                         base_annot = origin or field_info.annotation
                         if base_annot is int:
-                            if isinstance(v, str):
-                                digits = re.findall(r'\d+', v)
-                                if digits: v = int(digits[0])
+                            if isinstance(v, (float, int)):
+                                v = int(float(v)) # Handle 1.1 -> 1
+                            elif isinstance(v, str):
+                                # Try to extract numbers from "Scene 1" or "1.1" or just "1"
+                                # If it's a float-like string "1.1", take the integer part
+                                if "." in v:
+                                    try: v = int(float(v))
+                                    except: pass
+                                else:
+                                    digits = re.findall(r'\d+', v)
+                                    if digits: v = int(digits[0])
                             elif not isinstance(v, int):
                                 try: v = int(v)
                                 except: pass
@@ -187,17 +207,56 @@ class JSONResilienceAgent:
 
                     new_data[target_key] = _get_nested_val(v, annotation)
                 else:
-                    # Special case: map 'title' to 'id' if 'id' is missing and v is a number-like string
-                    if k.lower() == "title" and "id" in target_fields and "id" not in new_data:
-                        try:
-                            digits = re.findall(r'\d+', str(v))
-                            if digits: new_data["id"] = int(digits[0])
-                        except: pass
+                    # Key not in schema, keep it for fallback processing
                     pass
             
+            # Post-alignment fallbacks for required fields
+            # 1. Sequence ID Generation
+            if "id" in target_fields and "id" not in new_data:
+                # If we are in recursive mode we don't know the index, but we can try to find an excess field that looks like un ID
+                # or just set a placeholder. 
+                # Better yet: the parent list processor should handle this.
+                pass
+
+            # 2. Scene-Specific Fallbacks (The Alchemist Problem)
+            # If location is missing, try to steal from title or setting
+            if "location" in target_fields and not new_data.get("location"):
+                for fallback in ["setting", "title", "description", "scene"]:
+                    if current_data.get(fallback) and len(str(current_data.get(fallback))) < 100:
+                        new_data["location"] = str(current_data.get(fallback))
+                        break
+                if not new_data.get("location"):
+                    new_data["location"] = "Unknown Location"
+
+            # If narrative_summary is missing, try scene or description
+            if "narrative_summary" in target_fields and not new_data.get("narrative_summary"):
+                for fallback in ["scene", "description", "text", "summary"]:
+                    if current_data.get(fallback):
+                        new_data["narrative_summary"] = str(current_data.get(fallback))
+                        break
+
             return new_data
 
-        return _align_fields(data, schema)
+        # Wrap _align_fields to handle list sequence IDs
+        def _process_item(item, schema_type, index):
+            aligned = _align_fields(item, schema_type)
+            if "id" in schema_type.model_fields and (aligned.get("id") is None):
+                aligned["id"] = index + 1
+            return aligned
+
+        # Top level return with index awareness for lists
+        if isinstance(data, list) and self._is_pydantic_base(schema):
+            return [_process_item(item, self._get_base_model(schema), i) for i, item in enumerate(data)]
+        
+        # If it's a dict
+        final_data = _align_fields(data, schema)
+        
+        # Ensure top level lists (like scenes) have IDs
+        if "scenes" in final_data and isinstance(final_data["scenes"], list):
+            from src.core.models import Scene
+            final_data["scenes"] = [_process_item(s, Scene, i) for i, s in enumerate(final_data["scenes"])]
+            
+        return final_data
 
     def _pre_process_json_string(self, text: str) -> str:
         """Fixes trailing commas and unescaped quotes at a string level."""

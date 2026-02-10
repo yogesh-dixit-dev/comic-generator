@@ -71,6 +71,58 @@ class TestJSONResilience(unittest.TestCase):
         # LayoutEngine output models might have them.
         pass
 
+    def test_float_id_normalization(self):
+        """Verify that floating point IDs (e.g. 1.1) are truncated to integers."""
+        bad_json = json.dumps({
+            "title": "Story",
+            "synopsis": "Syn",
+            "scenes": [
+                {
+                    "id": 1,
+                    "location": "Loc",
+                    "narrative_summary": "Sum",
+                    "panels": [
+                        {"id": 1.1, "description": "Float ID Test"}
+                    ]
+                }
+            ]
+        })
+        repaired = self.agent.repair_json(bad_json, ComicScript)
+        self.assertEqual(repaired["scenes"][0]["panels"][0]["id"], 1)
+
+    def test_scene_field_fallbacks(self):
+        """Verify that missing Scene fields are filled from common LLM hallucinations."""
+        bad_json = json.dumps({
+            "title": "Story",
+            "synopsis": "Syn",
+            "scenes": [
+                {
+                    # Missing ID and Location
+                    "setting": "The Oasis",
+                    "scene": "A mysterious scene unfolds."
+                }
+            ]
+        })
+        repaired = self.agent.repair_json(bad_json, ComicScript)
+        scene = repaired["scenes"][0]
+        self.assertEqual(scene["id"], 1) # Auto-generated
+        self.assertEqual(scene["location"], "The Oasis") # From 'setting'
+        self.assertEqual(scene["narrative_summary"], "A mysterious scene unfolds.") # From 'scene'
+
+    def test_auto_generated_ids(self):
+        """Verify that lists of objects get sequential IDs if missing."""
+        bad_json = json.dumps({
+            "title": "Story",
+            "synopsis": "Syn",
+            "scenes": [
+                {"location": "A", "narrative_summary": "S1"},
+                {"location": "B", "narrative_summary": "S2"}
+            ]
+        })
+        repaired = self.agent.repair_json(bad_json, ComicScript)
+        self.assertEqual(repaired["scenes"][0]["id"], 1)
+        self.assertEqual(repaired["scenes"][1]["id"], 2)
+
     def test_dialogue_repair(self):
         """Verify that string-based dialogue lists are repaired to speaker/text dicts."""
         bad_json = json.dumps({
