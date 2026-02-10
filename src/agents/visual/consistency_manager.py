@@ -5,8 +5,8 @@ from src.core.models import Character, Panel
 class ConsistencyManager(BaseAgent):
     def __init__(self, agent_name: str = "ConsistencyManager", config: Dict[str, Any] = None):
         super().__init__(agent_name, config)
-        self.style_preset = config.get("style_preset", "cinematic, detailed, comic book style")
-        self.negative_prompt = config.get("negative_prompt", "blurry, low quality, distortion, bad anatomy")
+        self.style_preset = self.config.get("style_preset", "cinematic, detailed, comic book style")
+        self.negative_prompt = self.config.get("negative_prompt", "blurry, low quality, distortion, bad anatomy")
 
     def process(self, panel: Panel, characters: List[Character]) -> str:
         """
