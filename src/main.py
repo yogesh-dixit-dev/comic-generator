@@ -97,11 +97,33 @@ def main():
             return
         
         logger.info(f"📄 Processing story ({len(raw_text)} characters)...")
-        # TODO: Implement chunking loop here for long texts. For MVP, process single chunk.
-        # chunks = input_reader.chunk_text(raw_text)
-        # For simplicity in V1, we just take the first chunk or whole text if small
-        script = script_writer.run(raw_text, expected_schema=ComicScript)
-        logger.info(f"Generated Script: {script.title}")
+        
+        # Step 2: Write Script (Chunked for long stories)
+        from src.utils.script_consolidator import ScriptConsolidator
+        consolidator = ScriptConsolidator()
+        
+        # Decide chunk size. 2000 words is safe for Llama 3.2
+        chunks = input_reader.chunk_text(raw_text, max_words=2000)
+        logger.info(f"🧩 Split story into {len(chunks)} chunk(s).")
+
+        for i, chunk_text in enumerate(chunks):
+            logger.info(f"✍️ Processing Chunk {i+1}/{len(chunks)}...")
+            try:
+                # We skip schema validation on run if it's too restrictive for multi-chunk
+                # But here ComicScript matches.
+                chunk_script = script_writer.run(chunk_text, expected_schema=ComicScript)
+                consolidator.add_chunk(chunk_script)
+            except Exception as e:
+                logger.error(f"❌ Failed to process chunk {i+1}: {e}")
+                if i == 0: raise 
+                continue
+
+        script = consolidator.get_script()
+        if not script:
+            logger.error("❌ No script scenes were generated!")
+            return
+
+        logger.info(f"✅ Generated Full Script: '{script.title}' with {len(script.scenes)} scenes.")
         
         # Step 3: Critique Script
         critique = script_critique.run(script)
@@ -109,54 +131,44 @@ def main():
             logger.warning(f"Script Critique Failed: {critique.feedback}")
         
         # Step 4: Character Design
-        # Returns List[Character], but BaseAgent.run validation expects specific schema.
-        # We handle this manually or wrap in object. CharacterDesigner returns List[Character].
-        # Because validation might fail on List, we might skip strict schema check here or allow List.
-        # For now, let's call process directly or implement wrapper model.
-        # Let's assume run() handles List if schema is verified or we skip it.
-        characters = character_designer.process(script) 
+        characters = character_designer.run(script) 
+        logger.info(f"👤 Designed {len(characters)} characters.")
         
-        # Verify characters
         char_critique = character_critique.run(characters)
         if not char_critique.passed:
-            logger.warning(f"Character Critique Failed: {char_critique.feedback}")
+             logger.warning(f"Character Critique Failed: {char_critique.feedback}")
 
-        # Step 5: Directing (Add Camera/Lighting)
-        script = director.run(script, expected_schema=ComicScript)
-        
-        # Step 6: Illustration
-        # This modifies the script in place (adding image paths)
+        # Step 5: Visual Production (Scene by Scene)
+        finished_pages = []
         for scene in script.scenes:
-            logger.info(f"Processing Scene {scene.id}...")
-            for panel in scene.panels:
-                # Illustrator validates internally? 
-                # It returns a Panel.
-                # We update the panel in the scene object.
-                updated_panel = illustrator.run(panel, expected_schema=Panel)
-                # Note: 'run' validation logic might need `updated_panel` to be dict if using parse_obj,
-                # or object if Pydantic. BaseAgent logic handles both.
-                
-                # Update the object in list (since strictly 'updated_panel' is a new object/dict)
-                # But for now, Illustrator modifies in place essentially or returns modify.
-                # We need to ensure we are updating the scene list.
-                pass # Logic is implied by `illustrator.process` returning modified panel
-
-        # Step 7: Assembly (Layout & Lettering)
-        for scene in script.scenes:
-            # Layout
-            scene.panels = layout_engine.run(scene.panels) # Returns List[Panel]
+            logger.info(f"🎬 Producing Scene {scene.id}: {scene.location}")
             
-            # Lettering
-            for panel in scene.panels:
-                final_path = lettering_agent.run(panel)
-                logger.info(f"Final Panel Image: {final_path}")
+            # Director plans the shots
+            scene_plan = director.run(scene)
+            
+            # Illustrator generates images
+            for panel in scene_plan.panels:
+                logger.info(f"🎨 Illustrating Panel {panel.id}...")
+                illustrator.run(panel)
+            
+            # Step 6: Layout & Lettering (Per Scene for now, or Per Page)
+            logger.info(f"📐 Assembling Scene {scene.id}...")
+            scene_pages = layout_engine.run(scene.panels)
+            
+            for page in scene_pages:
+                final_page = lettering_agent.run(page)
+                finished_pages.append(final_page)
         
-        # Sync with Storage
+        # Step 7: Storage
+        output_paths = storage.save_comic(script, finished_pages, args.output)
+        logger.info(f"🚀 Comic Generation Complete! Output saved to {args.output}")
+        for p in output_paths:
+            logger.info(f"  - {p}")
+            
+        # Optional: Sync to HF if configured
         if args.storage == "hf":
-            storage.sync(source_dir="output", target_dir="comic_output")
+            storage.sync(source_dir=args.output, target_dir="comic_output")
             logger.info("Synced output to Hugging Face Hub successfully.")
-            
-        logger.info("Comic Generation Complete!")
 
     except Exception as e:
         logger.error(f"Pipeline failed: {e}")
