@@ -61,15 +61,21 @@ class LLMInterface:
             )
             
             content = response.choices[0].message.content
-            logger.debug(f"Raw LLM Response: {content}")
+            logger.info(f"Raw LLM Response (first 200 chars): {content[:200]}...")
             
             # Use robust extractor
             json_content = self._extract_json(content)
+            logger.debug(f"Extracted JSON Content: {json_content}")
+            
             data = json.loads(json_content)
+            logger.info(f"Parsed JSON keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
+            
             return schema.model_validate(data)
 
         except Exception as e:
             logger.error(f"LLM generation failed: {str(e)}")
+            if 'data' in locals():
+                logger.error(f"Data that failed validation: {data}")
             raise
 
     def generate_text(self, prompt: str, system_prompt: str = "You are a helpful assistant.") -> str:
