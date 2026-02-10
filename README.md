@@ -19,7 +19,12 @@ A modular, agent-based system for converting text (novels, stories, scripts) int
 3.  Set up your environment variables (create a `.env` file):
     ```bash
     OPENAI_API_KEY=your_key_here
-    # Optional: LITELLM_MODEL=ollama/llama3 for local inference
+    
+    # Optional: Override the default model (gpt-4o-mini)
+    # Examples:
+    # LITELLM_MODEL=gpt-4o          # Requires tier 1+ OpenAI access
+    # LITELLM_MODEL=gpt-3.5-turbo   # Most accessible
+    # LITELLM_MODEL=ollama/llama3   # Local inference with Ollama
     ```
 
 ## Usage
