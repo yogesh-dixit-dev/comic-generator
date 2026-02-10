@@ -16,15 +16,18 @@ class JSONResilienceAgent:
     
     def __init__(self, fast_model_interface=None):
         self.fast_model = fast_model_interface
-        # Common Llama hallucinations map
         self.field_aliases = {
             "panel_id": "id",
             "scene_id": "id",
+            "scene_number": "id",
             "location_name": "location",
             "character_name": "name",
             "char_name": "name",
             "visual_description": "description",
             "panel_description": "description",
+            "narrative": "narrative_summary",
+            "text": "narrative_summary",
+            "summary": "narrative_summary",
             "dialog": "dialogue",
             "script_title": "title",
             "story_synopsis": "synopsis"
@@ -35,24 +38,46 @@ class JSONResilienceAgent:
         Generates a recursive, deep JSON skeleton from a Pydantic model.
         Resolves nested models to provide a complete template.
         """
+        from typing import get_origin, get_args
+
+        def _is_pydantic_base(cls):
+            if isinstance(cls, type) and issubclass(cls, BaseModel):
+                return True
+            # Handle Optional/Union
+            origin = get_origin(cls)
+            if origin is not None:
+                args = get_args(cls)
+                for arg in args:
+                    if _is_pydantic_base(arg):
+                        return True
+            return False
+
+        def _get_base_model(cls):
+            if isinstance(cls, type) and issubclass(cls, BaseModel):
+                return cls
+            origin = get_origin(cls)
+            if origin is not None:
+                for arg in get_args(cls):
+                    res = _get_base_model(arg)
+                    if res: return res
+            return None
+
         def _get_default_val(field_type: Any) -> Any:
-            # Simple recursive walker using Pydantic's model info
-            if hasattr(field_type, "__origin__"): # Handle List, Dict, etc.
-                origin = field_type.__origin__
-                if origin is list:
-                    # Look for the internal type
-                    args = field_type.__args__
-                    if args and issubclass(args[0], BaseModel):
-                        return [_build_obj(args[0])]
-                    return ["..."]
-                return {}
+            origin = get_origin(field_type)
+            if origin is list:
+                args = get_args(field_type)
+                if args and _is_pydantic_base(args[0]):
+                    return [_build_obj(_get_base_model(args[0]))]
+                return ["..."]
             
-            if issubclass(field_type, BaseModel):
-                return _build_obj(field_type)
+            if _is_pydantic_base(field_type):
+                return _build_obj(_get_base_model(field_type))
             
-            if field_type is int: return 0
-            if field_type is float: return 0.0
-            if field_type is bool: return True
+            # Use base type if available
+            base_type = origin or field_type
+            if base_type is int: return 1
+            if base_type in (float, complex): return 0.0
+            if base_type is bool: return True
             return "..."
 
         def _build_obj(model: Type[BaseModel]) -> Dict[str, Any]:
@@ -109,20 +134,36 @@ class JSONResilienceAgent:
                 field_info = target_fields.get(target_key)
                 if field_info:
                     annotation = field_info.annotation
-                    # Handle nested model
-                    if issubclass(type(annotation), type) and issubclass(annotation, BaseModel):
-                        new_data[target_key] = _align_fields(v, annotation)
-                    # Handle List[BaseModel]
-                    elif hasattr(annotation, "__origin__") and annotation.__origin__ is list:
-                        args = annotation.__args__
-                        if args and issubclass(args[0], BaseModel):
-                            new_data[target_key] = [_align_fields(item, args[0]) for item in v] if isinstance(v, list) else v
-                        else:
-                            new_data[target_key] = v
-                    else:
-                        new_data[target_key] = v
+                    from typing import get_origin, get_args
+                    
+                    def _get_nested_val(val, annot):
+                        if _is_pydantic_base(annot):
+                            return _align_fields(val, _get_base_model(annot))
+                        origin = get_origin(annot)
+                        if origin is list:
+                            args = get_args(annot)
+                            if args and _is_pydantic_base(args[0]) and isinstance(val, list):
+                                return [_align_fields(item, _get_base_model(args[0])) for item in val]
+                        return val
+
+                    # Heuristic for INT fields (like 'id' or 'panel_id')
+                    if field_info.annotation is int or get_origin(field_info.annotation) is int:
+                        if isinstance(v, str):
+                            # Try to extract numbers from "Scene 1" or just "1"
+                            digits = re.findall(r'\d+', v)
+                            if digits: v = int(digits[0])
+                        elif not isinstance(v, int):
+                            try: v = int(v)
+                            except: pass
+
+                    new_data[target_key] = _get_nested_val(v, annotation)
                 else:
-                    # Key not in schema, discard or keep? For now, discard to be "rigorous"
+                    # Special case: map 'title' to 'id' if 'id' is missing and v is a number-like string
+                    if k.lower() == "title" and "id" in target_fields and "id" not in new_data:
+                        try:
+                            digits = re.findall(r'\d+', str(v))
+                            if digits: new_data["id"] = int(digits[0])
+                        except: pass
                     pass
             
             return new_data
