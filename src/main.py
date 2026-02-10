@@ -1,6 +1,14 @@
 import os
+import sys
 import argparse
 import logging
+
+# Fix imports for Colab and different working directories
+# Add project root to Python path
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 from src.core.models import ComicScript, Scene, Panel, Character
 from src.agents.narrative.input_reader import InputReaderAgent
 from src.agents.narrative.script_writer import ScriptWriterAgent
