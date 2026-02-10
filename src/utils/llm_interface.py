@@ -16,37 +16,60 @@ class LLMInterface:
         self.api_key = api_key or os.getenv("OPENAI_API_KEY") # Fallback to env var
         # litellm handles API keys from env vars automatically for many providers
 
-    def generate_structured_output(self, prompt: str, schema: Type[T], system_prompt: str = "You are a helpful assistant.") -> T:
+    def _extract_json(self, text: str) -> str:
+        """
+        Extracts JSON content from a string that might be wrapped in markdown code blocks.
+        """
+        # Trim whitespace
+        text = text.strip()
+        
+        # Check for markdown code blocks
+        import re
+        json_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
+        if json_match:
+            return json_match.group(1).strip()
+            
+        # If no block, but starts with '{' or '[', assume it's raw JSON
+        if text.startswith("{") or text.startswith("["):
+            return text
+            
+        return text
+
+    def generate_structured_output(self, prompt: str, schema: Type[T], system_prompt: str = "You are a helpful assistant. Respond ONLY with valid JSON.") -> T:
         """
         Generates a response from the LLM that strictly enforces the given Pydantic schema.
         """
         try:
             logger.info(f"Sending request to LLM ({self.model_name})...")
             
-            # Use LiteLLM's function calling or JSON mode to enforce schema
-            # For simplicity with variable providers, we'll try to use the 'response_format' if supported (OpenAI)
-            # or standard prompting with Pydantic schema dump.
-            
+            # Augment system prompt for smaller models
+            if "ollama" in self.model_name or "gemini" in self.model_name:
+                schema_json = json.dumps(schema.model_json_schema(), indent=2)
+                enhanced_system = f"{system_prompt}\nYou MUST return a JSON object that matches this schema:\n{schema_json}\nReturn ONLY the JSON. No explanations."
+            else:
+                enhanced_system = system_prompt
+
             response = completion(
                 model=self.model_name,
                 messages=[
-                    {"role": "system", "content": system_prompt},
+                    {"role": "system", "content": enhanced_system},
                     {"role": "user", "content": prompt}
                 ],
-                response_format={"type": "json_object"} if "gpt" in self.model_name else None,
+                # LiteLLM supports response_format for some providers
+                response_format={"type": "json_object"} if any(x in self.model_name for x in ["gpt", "ollama", "gemini"]) else None,
                 api_key=self.api_key
             )
             
             content = response.choices[0].message.content
-            logger.debug(f"LLM Response: {content}")
+            logger.debug(f"Raw LLM Response: {content}")
             
-            # Naive parsing for now - robust implementation would handle retries / json repair
-            data = json.loads(content)
+            # Use robust extractor
+            json_content = self._extract_json(content)
+            data = json.loads(json_content)
             return schema.model_validate(data)
 
         except Exception as e:
             logger.error(f"LLM generation failed: {str(e)}")
-            # Fallback strategy could be added here
             raise
 
     def generate_text(self, prompt: str, system_prompt: str = "You are a helpful assistant.") -> str:
