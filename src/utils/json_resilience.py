@@ -259,10 +259,37 @@ class JSONResilienceAgent:
         return final_data
 
     def _pre_process_json_string(self, text: str) -> str:
-        """Fixes trailing commas and unescaped quotes at a string level."""
+        """Fixes common structural JSON errors at a raw string level."""
+        # 0. Strip leading/trailing non-JSON noise (markdown fences etc)
+        text = text.strip()
+        if text.startswith("```json"):
+            text = text[7:]
+        elif text.startswith("```"):
+            text = text[3:]
+            
+        if text.endswith("```"):
+            text = text[:-3]
+        text = text.strip()
+
         # 1. Fix trailing commas before closing braces/brackets
         text = re.sub(r',\s*([\]}])', r'\1', text)
+        
         # 2. Add missing commas between objects in lists (common Llama error)
         text = re.sub(r'}\s*{', '}, {', text)
         text = re.sub(r']\s*\[', '], [', text)
+        
+        # 3. Add missing commas between key-value pairs (aggressive)
+        # Matches: "key": value "key":
+        # We look for a pattern where a value (string, number, or boolean) is followed by a quote without a comma.
+        # This is strictly a fallback for when the initial parse fails.
+        text = re.sub(r'("\s*:\s*(?:(?:"[^"]*")|(?:\d+(?:\.\d+)?)|(?:true|false|null)))\s*(")', r'\1, \2', text)
+        
+        # 4. Handle truncated JSON (unclosed brackets/braces)
+        # If the string ends abruptly, try to close it. 
+        # (This is very heuristic, but better than a hard crash)
+        open_braces = text.count('{') - text.count('}')
+        open_brackets = text.count('[') - text.count(']')
+        if open_braces > 0: text += '}' * open_braces
+        if open_brackets > 0: text += ']' * open_brackets
+        
         return text

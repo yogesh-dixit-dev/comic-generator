@@ -20,6 +20,13 @@ class BaseAgent(ABC):
         # To be implemented by subclasses
         pass
 
+    def critique(self, input_data: Any, result: Any) -> Dict[str, Any]:
+        """
+        Default critique method that passes by default.
+        Subclasses can override this to implement self-correction.
+        """
+        return {"passed": True, "feedback": "No critique implementation; skipping."}
+
     def validate_output(self, data: Any, expected_schema: Any) -> Any:
         """
         Validates that the data matches the expected Pydantic schema.
