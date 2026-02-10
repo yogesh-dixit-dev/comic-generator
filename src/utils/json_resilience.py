@@ -34,8 +34,13 @@ class JSONResilienceAgent:
             "summary": "narrative_summary",
             "scene": "narrative_summary",
             "dialog": "dialogue",
+            "dialogue": "dialogue",
             "script_title": "title",
-            "story_synopsis": "synopsis"
+            "story_synopsis": "synopsis",
+            "goal": "personality",
+            "motivation": "personality",
+            "background": "personality",
+            "occupation": "personality"
         }
 
     def _is_pydantic_base(self, cls):
@@ -117,6 +122,62 @@ class JSONResilienceAgent:
             cleaned = self._pre_process_json_string(raw_json)
             data = json.loads(cleaned)
 
+        # Shared Helpers
+        def _flatten_to_string(o: Any) -> str:
+            if isinstance(o, str): return o
+            if isinstance(o, (int, float, bool)): return str(o)
+            if isinstance(o, dict):
+                return "; ".join([f"{k}: {_flatten_to_string(v)}" for k, v in o.items()])
+            if isinstance(o, list):
+                return " | ".join([_flatten_to_string(i) for i in o])
+            return str(o)
+
+        def _get_nested_val(val, annot):
+            if self._is_pydantic_base(annot):
+                return _align_fields(val, self._get_base_model(annot))
+            
+            origin = get_origin(annot)
+            base_annot = origin or annot
+
+            # Case: Expected String, but got Object/List
+            if base_annot is str and not isinstance(val, str):
+                return _flatten_to_string(val)
+
+            if origin is list:
+                from typing import get_args
+                args = get_args(annot)
+                if args and self._is_pydantic_base(args[0]) and isinstance(val, list):
+                    return [_align_fields(item, self._get_base_model(args[0])) for item in val]
+                
+                # Heuristic: Repair Dialogue/List Hallucination
+                is_dict = False
+                try: is_dict = issubclass(args[0], dict)
+                except: pass
+
+                if args and (self._is_pydantic_base(args[0]) or is_dict) and isinstance(val, list):
+                    target_fields_sub = []
+                    if is_dict:
+                        target_fields_sub = ["speaker", "text"]
+                    else:
+                        target_fields_sub = self._get_base_model(args[0]).model_fields
+                    
+                    if "speaker" in target_fields_sub and "text" in target_fields_sub:
+                        repaired_list = []
+                        for item in val:
+                            if isinstance(item, str):
+                                if ":" in item:
+                                    parts = item.split(":", 1)
+                                    repaired_list.append({"speaker": parts[0].strip(), "text": parts[1].strip()})
+                                else:
+                                    repaired_list.append({"speaker": "Narrator", "text": item})
+                            else:
+                                repaired_list.append(item)
+                        return repaired_list
+                    
+                    if not is_dict:
+                        return [_align_fields(item, self._get_base_model(args[0])) for item in val]
+            return val
+
         # Recursive field mapper
         def _align_fields(current_data: Any, current_schema: Type[BaseModel]):
             if not isinstance(current_data, dict):
@@ -126,6 +187,7 @@ class JSONResilienceAgent:
             target_fields = current_schema.model_fields
             
             for k, v in current_data.items():
+                from typing import get_origin
                 # 1. Direct match
                 if k in target_fields:
                     target_key = k
@@ -144,48 +206,14 @@ class JSONResilienceAgent:
                 # Recursive step if value is a dict or list of dicts
                 field_info = target_fields.get(target_key)
                 if field_info:
-                    annotation = field_info.annotation
-                    from typing import get_origin, get_args
-                    
-                    def _get_nested_val(val, annot):
-                        if self._is_pydantic_base(annot):
-                            return _align_fields(val, self._get_base_model(annot))
-                        origin = get_origin(annot)
-                        if origin is list:
-                            args = get_args(annot)
-                            if args and self._is_pydantic_base(args[0]) and isinstance(val, list):
-                                return [_align_fields(item, self._get_base_model(args[0])) for item in val]
-                            
-                            # Heuristic: Repair Dialogue Hallucination
-                            # If we expect List[BaseModel] or List[Dict] (like Panel.dialogue) but get List[str]
-                            is_dict = False
-                            try: is_dict = issubclass(args[0], dict)
-                            except: pass
+                    processed_val = _get_nested_val(v, field_info.annotation)
 
-                            if args and (self._is_pydantic_base(args[0]) or is_dict) and isinstance(val, list):
-                                # If the target looks like a dialogue item (via dict keys or model fields)
-                                target_fields = []
-                                if is_dict:
-                                    target_fields = ["speaker", "text"]
-                                else:
-                                    target_fields = self._get_base_model(args[0]).model_fields
-                                
-                                if "speaker" in target_fields and "text" in target_fields:
-                                    repaired_list = []
-                                    for item in val:
-                                        if isinstance(item, str):
-                                            if ":" in item:
-                                                parts = item.split(":", 1)
-                                                repaired_list.append({"speaker": parts[0].strip(), "text": parts[1].strip()})
-                                            else:
-                                                repaired_list.append({"speaker": "Narrator", "text": item})
-                                        else:
-                                            repaired_list.append(item)
-                                    return repaired_list
-                                
-                                if not is_dict:
-                                    return [_align_fields(item, self._get_base_model(args[0])) for item in val]
-                        return val
+                    # Smart Concatenation: If the target is a string and already has a value, append
+                    if target_key in new_data and isinstance(processed_val, str) and isinstance(new_data[target_key], str):
+                        if processed_val not in new_data[target_key]:
+                            new_data[target_key] = f"{new_data[target_key]}; {processed_val}"
+                    else:
+                        new_data[target_key] = processed_val
 
                     # Heuristic for INT/FLOAT fields
                     try:
@@ -194,6 +222,11 @@ class JSONResilienceAgent:
                         
                         if base_annot in (int, float):
                             current_val = v
+                            # Handle Dict of scores (e.g. {'visuals': 6, 'pacing': 8})
+                            if isinstance(v, dict):
+                                scores = [float(x) for x in v.values() if isinstance(x, (int, float, str)) and str(x).replace('.','',1).isdigit()]
+                                if scores: current_val = sum(scores) / len(scores)
+                            
                             if isinstance(v, str):
                                 # 1. Handle fractions like "6/10"
                                 if "/" in v:
@@ -203,6 +236,7 @@ class JSONResilienceAgent:
                                     except: pass
                                 else:
                                     # 2. Extract first number
+                                    import re
                                     digits = re.findall(r'[-+]?\d*\.\d+|\d+', v)
                                     if digits: current_val = float(digits[0])
                             
@@ -215,6 +249,7 @@ class JSONResilienceAgent:
                                 v = int(float(current_val))
                             else:
                                 v = float(current_val)
+                            new_data[target_key] = v
                     except: pass
 
                     # Heuristic for BOOL fields
@@ -222,12 +257,11 @@ class JSONResilienceAgent:
                         origin = get_origin(field_info.annotation)
                         base_annot = origin or field_info.annotation
                         if base_annot is bool:
-                            if isinstance(v, str):
-                                if v.lower() in ("yes", "true", "y", "1", "pass"): v = True
-                                elif v.lower() in ("no", "false", "n", "0", "fail"): v = False
+                            curr = new_data[target_key]
+                            if isinstance(curr, str):
+                                if curr.lower() in ("yes", "true", "y", "1", "pass"): new_data[target_key] = True
+                                elif curr.lower() in ("no", "false", "n", "0", "fail"): new_data[target_key] = False
                     except: pass
-
-                    new_data[target_key] = _get_nested_val(v, annotation)
                 else:
                     # Key not in schema, keep it for fallback processing
                     pass
