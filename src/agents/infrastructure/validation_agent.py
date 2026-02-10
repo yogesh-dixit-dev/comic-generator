@@ -91,18 +91,41 @@ class ValidationAgent(BaseAgent):
             if os.path.exists(test_story_path):
                 os.remove(test_story_path)
 
+    def run_unit_tests(self) -> bool:
+        """
+        Runs all unit tests in the tests/ directory.
+        """
+        logger.info("Running unit tests...")
+        try:
+            # We use unittest discover to find and run all tests
+            cmd = [sys.executable, "-m", "unittest", "discover", "tests"]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                logger.info("✅ All unit tests passed.")
+                return True
+            else:
+                logger.error("❌ Unit tests failed.")
+                logger.error(f"STDOUT: {result.stdout}")
+                logger.error(f"STDERR: {result.stderr}")
+                return False
+        except Exception as e:
+            logger.error(f"❌ Error running unit tests: {e}")
+            return False
+
     def process(self, input_data: Any = None) -> bool:
         """
         Main entry point for validation.
         Returns True if all checks pass.
         """
+        # 1. Check Syntax
         syntax_ok = self.check_syntax("src")
         if not syntax_ok:
             return False
             
-        # Optional: E2E dry run
-        # dry_run_ok = self.run_dry_run()
-        # if not dry_run_ok:
-        #     return False
+        # 2. Run Unit Tests
+        tests_ok = self.run_unit_tests()
+        if not tests_ok:
+            return False
             
         return True
