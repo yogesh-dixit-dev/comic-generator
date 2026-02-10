@@ -2,9 +2,11 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
 class Character(BaseModel):
-    name: str = Field(..., description="Name of the character")
-    description: str = Field(..., description="Physical description of the character")
-    personality: str = Field(..., description="Personality traits relevant to visual expression")
+    name: str = Field(..., description="The unique, canonical name of the character")
+    aliases: List[str] = Field(default_factory=list, description="Other names or titles used for this character (e.g., 'The Young Shepherd')")
+    pronouns: str = Field(..., description="Pronouns for the character (e.g., 'He/Him')")
+    description: str = Field(..., description="Detailed physical description (age, hair, clothes, distinct features)")
+    personality: str = Field(..., description="Core personality traits and typical expressions")
     reference_image_path: Optional[str] = Field(None, description="Path to a reference image file if available")
 
 class Panel(BaseModel):

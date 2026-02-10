@@ -1,7 +1,7 @@
 import json
 import logging
 import re
-from typing import Type, Any, Dict, List, TypeVar, Optional
+from typing import Type, Any, Dict, List, TypeVar, Optional, get_origin, get_args
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -38,9 +38,14 @@ class JSONResilienceAgent:
             "script_title": "title",
             "story_synopsis": "synopsis",
             "goal": "personality",
+            "goals": "personality",
             "motivation": "personality",
+            "motivations": "personality",
+            "personality_traits": "personality",
+            "traits": "personality",
             "background": "personality",
-            "occupation": "personality"
+            "occupation": "personality",
+            "notes": "personality"
         }
 
     def _is_pydantic_base(self, cls):
@@ -259,8 +264,11 @@ class JSONResilienceAgent:
                         if base_annot is bool:
                             curr = new_data[target_key]
                             if isinstance(curr, str):
-                                if curr.lower() in ("yes", "true", "y", "1", "pass"): new_data[target_key] = True
-                                elif curr.lower() in ("no", "false", "n", "0", "fail"): new_data[target_key] = False
+                                val_norm = curr.lower().strip()
+                                if val_norm in ("yes", "true", "y", "1", "pass", "partially", "mostly"): 
+                                    new_data[target_key] = True
+                                elif val_norm in ("no", "false", "n", "0", "fail", "failed"): 
+                                    new_data[target_key] = False
                     except: pass
                 else:
                     # Key not in schema, keep it for fallback processing
@@ -293,6 +301,9 @@ class JSONResilienceAgent:
             if "personality" in target_fields and not new_data.get("personality"):
                 # If we have description but no personality, or if personality is just missing
                 new_data["personality"] = "Determined Character"
+
+            if "pronouns" in target_fields and not new_data.get("pronouns"):
+                new_data["pronouns"] = "They/Them"
 
             # 4. Style Guide Dict-to-String
             if "style_guide" in target_fields and isinstance(current_data.get("style_guide"), dict):

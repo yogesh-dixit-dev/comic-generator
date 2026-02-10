@@ -20,8 +20,13 @@ class ConsistencyManager(BaseAgent):
         # Add character details if present in the panel
         if panel.characters_present:
             for char_name in panel.characters_present:
-                # Find the character object
-                character = next((c for c in characters if c.name == char_name), None)
+                # Find the character object (check name or aliases)
+                character = None
+                for c in characters:
+                    if c.name.lower() == char_name.lower() or any(alias.lower() == char_name.lower() for alias in c.aliases):
+                        character = c
+                        break
+                
                 if character:
                     # Append strict visual description to the prompt
                     # In a more advanced version, this would trigger IP-Adapter or LoRA loading

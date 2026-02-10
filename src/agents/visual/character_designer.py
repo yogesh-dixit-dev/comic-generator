@@ -10,7 +10,7 @@ class CharacterDesignAgent(BaseAgent):
 
     def process(self, script: ComicScript) -> List[Character]:
         """
-        Analyzes the script and generates detailed character profiles.
+        Analyzes the script and generates detailed, unique character profiles.
         """
         self.logger.info("Generating character design profiles...")
         
@@ -18,10 +18,18 @@ class CharacterDesignAgent(BaseAgent):
         You are a master character designer for comics and animation.
         Your task is to create detailed visual profiles for each main character in the script.
         
+        CRITICAL RULES:
+        1. UNIQUENESS: Do not create duplicate profiles for the same person.
+        2. ALIASES: Identify if the same character is referred to by different names (e.g. 'Santiago' and 'The Shepherd'). List all such names in the 'aliases' field.
+        3. PRONOUNS: Specify the correct pronouns for the character.
+        4. CONSISTENCY: Ensure the visual descriptions are detailed enough for an illustrator to maintain consistency across different scenes.
+        
         For each character, specify:
-        1. Appearance: Physical traits (hair, eyes, build, distinct features).
-        2. Attire: Default outfit.
-        3. Personality: How their personality affects their look (posture, expression).
+        - name: The unique, canonical name.
+        - aliases: List of other ways they are mentioned.
+        - pronouns: e.g. 'He/Him', 'She/Her', 'They/Them'.
+        - description: Physical traits (hair, eyes, build, clothing style, distinct features like scars/glasses).
+        - personality: Traits that affect posture and expression.
         
         The output must be a list of Character objects.
         """
@@ -45,9 +53,9 @@ class CharacterDesignAgent(BaseAgent):
         Script Synopsis: {script.synopsis}
         
         (Infer details from the context of the story if not explicitly stated).
+        Make sure to merge similar characters into one with aliases.
         """
         
-        # We need a wrapper model because the LLM returns a single object, but we want a list
         from pydantic import BaseModel
         class CharacterList(BaseModel):
             characters: List[Character]
@@ -58,7 +66,17 @@ class CharacterDesignAgent(BaseAgent):
                 system_prompt=system_prompt,
                 schema=CharacterList
             )
-            return result.characters
+            
+            # Basic Deduplication
+            unique_chars = {}
+            for char in result.characters:
+                if char.name.lower() not in unique_chars:
+                    unique_chars[char.name.lower()] = char
+                else:
+                    # Merge description if possible? For now just keep the first one
+                    self.logger.warning(f"Duplicate character '{char.name}' found during design. Keeping first iteration.")
+            
+            return list(unique_chars.values())
         except Exception as e:
             self.logger.error(f"Failed to generate character profiles: {e}")
             raise
