@@ -187,25 +187,44 @@ class JSONResilienceAgent:
                                     return [_align_fields(item, self._get_base_model(args[0])) for item in val]
                         return val
 
-                    # Heuristic for INT fields (like 'id' or 'panel_id')
+                    # Heuristic for INT/FLOAT fields
                     try:
                         origin = get_origin(field_info.annotation)
                         base_annot = origin or field_info.annotation
-                        if base_annot is int:
-                            if isinstance(v, (float, int)):
-                                v = int(float(v)) # Handle 1.1 -> 1
-                            elif isinstance(v, str):
-                                # Try to extract numbers from "Scene 1" or "1.1" or just "1"
-                                # If it's a float-like string "1.1", take the integer part
-                                if "." in v:
-                                    try: v = int(float(v))
+                        
+                        if base_annot in (int, float):
+                            current_val = v
+                            if isinstance(v, str):
+                                # 1. Handle fractions like "6/10"
+                                if "/" in v:
+                                    try:
+                                        num, den = v.split("/")
+                                        current_val = float(num) / float(den) * 10.0 # Standardize to 10
                                     except: pass
                                 else:
-                                    digits = re.findall(r'\d+', v)
-                                    if digits: v = int(digits[0])
-                            elif not isinstance(v, int):
-                                try: v = int(v)
-                                except: pass
+                                    # 2. Extract first number
+                                    digits = re.findall(r'[-+]?\d*\.\d+|\d+', v)
+                                    if digits: current_val = float(digits[0])
+                            
+                            # 3. Handle normalization (if score > 10, assume /100)
+                            if isinstance(current_val, (int, float)) and current_val > 10 and "score" in target_key.lower():
+                                current_val = current_val / 10.0
+                            
+                            # 4. Final Type cast
+                            if base_annot is int:
+                                v = int(float(current_val))
+                            else:
+                                v = float(current_val)
+                    except: pass
+
+                    # Heuristic for BOOL fields
+                    try:
+                        origin = get_origin(field_info.annotation)
+                        base_annot = origin or field_info.annotation
+                        if base_annot is bool:
+                            if isinstance(v, str):
+                                if v.lower() in ("yes", "true", "y", "1", "pass"): v = True
+                                elif v.lower() in ("no", "false", "n", "0", "fail"): v = False
                     except: pass
 
                     new_data[target_key] = _get_nested_val(v, annotation)

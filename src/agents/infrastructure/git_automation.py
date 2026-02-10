@@ -21,7 +21,7 @@ class GitAutomationAgent(BaseAgent):
         try:
             # 2. Add all changes
             self.logger.info("Staging changes...")
-            subprocess.run(["git", "add", "."], check=True, capture_output=True)
+            self.run_command("git add .")
             
             # 3. Check if there are changes to commit
             status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
@@ -31,16 +31,28 @@ class GitAutomationAgent(BaseAgent):
 
             # 4. Commit
             self.logger.info(f"Committing with message: {commit_message}")
-            subprocess.run(["git", "commit", "-m", commit_message], check=True, capture_output=True)
+            self.run_command(f'git commit -m "{commit_message}"')
             
             # 5. Push
             self.logger.info("Pushing to remote...")
-            result = subprocess.run(["git", "push"], check=True, capture_output=True, text=True)
+            self.run_command("git push")
             
             self.logger.info("Git Push Successful!")
-            return f"Success: {result.stdout}"
+            return "Success: Changes pushed to remote."
             
-        except subprocess.CalledProcessError as e:
-            error_msg = f"Git command failed: {e.stderr}"
+        except Exception as e:
+            error_msg = f"Git automation failed: {e}"
             self.logger.error(error_msg)
             raise RuntimeError(error_msg)
+
+    def run_command(self, command: str) -> str:
+        """Runs a raw git command and returns output."""
+        try:
+            # We use shell=True carefully for git commands
+            import shlex
+            args = shlex.split(command)
+            result = subprocess.run(args, check=True, capture_output=True, text=True)
+            return result.stdout
+        except subprocess.CalledProcessError as e:
+            self.logger.warning(f"Git command '{command}' failed: {e.stderr}")
+            raise RuntimeError(e.stderr)
