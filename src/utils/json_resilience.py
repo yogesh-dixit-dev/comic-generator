@@ -33,6 +33,30 @@ class JSONResilienceAgent:
             "story_synopsis": "synopsis"
         }
 
+    def _is_pydantic_base(self, cls):
+        from typing import get_origin, get_args
+        if isinstance(cls, type) and issubclass(cls, BaseModel):
+            return True
+        # Handle Optional/Union
+        origin = get_origin(cls)
+        if origin is not None:
+            args = get_args(cls)
+            for arg in args:
+                if self._is_pydantic_base(arg):
+                    return True
+        return False
+
+    def _get_base_model(self, cls):
+        from typing import get_origin, get_args
+        if isinstance(cls, type) and issubclass(cls, BaseModel):
+            return cls
+        origin = get_origin(cls)
+        if origin is not None:
+            for arg in get_args(cls):
+                res = self._get_base_model(arg)
+                if res: return res
+        return None
+
     def generate_deep_skeleton(self, schema: Type[T]) -> str:
         """
         Generates a recursive, deep JSON skeleton from a Pydantic model.
@@ -40,38 +64,16 @@ class JSONResilienceAgent:
         """
         from typing import get_origin, get_args
 
-        def _is_pydantic_base(cls):
-            if isinstance(cls, type) and issubclass(cls, BaseModel):
-                return True
-            # Handle Optional/Union
-            origin = get_origin(cls)
-            if origin is not None:
-                args = get_args(cls)
-                for arg in args:
-                    if _is_pydantic_base(arg):
-                        return True
-            return False
-
-        def _get_base_model(cls):
-            if isinstance(cls, type) and issubclass(cls, BaseModel):
-                return cls
-            origin = get_origin(cls)
-            if origin is not None:
-                for arg in get_args(cls):
-                    res = _get_base_model(arg)
-                    if res: return res
-            return None
-
         def _get_default_val(field_type: Any) -> Any:
             origin = get_origin(field_type)
             if origin is list:
                 args = get_args(field_type)
-                if args and _is_pydantic_base(args[0]):
-                    return [_build_obj(_get_base_model(args[0]))]
+                if args and self._is_pydantic_base(args[0]):
+                    return [self._build_obj(self._get_base_model(args[0]))]
                 return ["..."]
             
-            if _is_pydantic_base(field_type):
-                return _build_obj(_get_base_model(field_type))
+            if self._is_pydantic_base(field_type):
+                return self._build_obj(self._get_base_model(field_type))
             
             # Use base type if available
             base_type = origin or field_type
@@ -80,19 +82,23 @@ class JSONResilienceAgent:
             if base_type is bool: return True
             return "..."
 
-        def _build_obj(model: Type[BaseModel]) -> Dict[str, Any]:
-            obj = {}
-            for name, field in model.model_fields.items():
-                # field.annotation gives the type
-                obj[name] = _get_default_val(field.annotation)
-            return obj
+        skeleton_dict = self._build_obj(schema)
+        return json.dumps(skeleton_dict, indent=2)
 
-        try:
-            skeleton_dict = _build_obj(schema)
-            return json.dumps(skeleton_dict, indent=2)
-        except Exception as e:
-            logger.error(f"Failed to generate deep skeleton: {e}")
-            return "{}"
+    def _build_obj(self, model: Type[BaseModel]) -> Dict[str, Any]:
+        obj = {}
+        for name, field in model.model_fields.items():
+            # In generate_deep_skeleton, we need a local-ish _get_default_val or just inline it
+            # To keep it clean, let's just make it a call back to a more robust helper if needed.
+            # Simplified for now to avoid circularity in local defs.
+            origin = getattr(field.annotation, "__origin__", None)
+            if origin is list:
+                obj[name] = []
+            elif isinstance(field.annotation, type) and issubclass(field.annotation, BaseModel):
+                obj[name] = {} # Stub for shallow skeletons
+            else:
+                obj[name] = "..."
+        return obj
 
     def repair_json(self, raw_json: str, schema: Type[T]) -> Dict[str, Any]:
         """
@@ -137,24 +143,47 @@ class JSONResilienceAgent:
                     from typing import get_origin, get_args
                     
                     def _get_nested_val(val, annot):
-                        if _is_pydantic_base(annot):
-                            return _align_fields(val, _get_base_model(annot))
+                        if self._is_pydantic_base(annot):
+                            return _align_fields(val, self._get_base_model(annot))
                         origin = get_origin(annot)
                         if origin is list:
                             args = get_args(annot)
-                            if args and _is_pydantic_base(args[0]) and isinstance(val, list):
-                                return [_align_fields(item, _get_base_model(args[0])) for item in val]
+                            if args and self._is_pydantic_base(args[0]) and isinstance(val, list):
+                                return [_align_fields(item, self._get_base_model(args[0])) for item in val]
+                            
+                            # Heuristic: Repair Dialogue Hallucination
+                            # If we expect List[BaseModel] (like Panel.dialogue) but get List[str]
+                            if args and self._is_pydantic_base(args[0]) and isinstance(val, list):
+                                # If the target model has 'speaker' and 'text' fields, we can repair it
+                                base_model = self._get_base_model(args[0])
+                                fields = base_model.model_fields
+                                if "speaker" in fields and "text" in fields:
+                                    repaired_list = []
+                                    for item in val:
+                                        if isinstance(item, str):
+                                            if ":" in item:
+                                                parts = item.split(":", 1)
+                                                repaired_list.append({"speaker": parts[0].strip(), "text": parts[1].strip()})
+                                            else:
+                                                repaired_list.append({"speaker": "Narrator", "text": item})
+                                        else:
+                                            repaired_list.append(item)
+                                    return repaired_list
+                                return [_align_fields(item, base_model) for item in val]
                         return val
 
                     # Heuristic for INT fields (like 'id' or 'panel_id')
-                    if field_info.annotation is int or get_origin(field_info.annotation) is int:
-                        if isinstance(v, str):
-                            # Try to extract numbers from "Scene 1" or just "1"
-                            digits = re.findall(r'\d+', v)
-                            if digits: v = int(digits[0])
-                        elif not isinstance(v, int):
-                            try: v = int(v)
-                            except: pass
+                    try:
+                        origin = get_origin(field_info.annotation)
+                        base_annot = origin or field_info.annotation
+                        if base_annot is int:
+                            if isinstance(v, str):
+                                digits = re.findall(r'\d+', v)
+                                if digits: v = int(digits[0])
+                            elif not isinstance(v, int):
+                                try: v = int(v)
+                                except: pass
+                    except: pass
 
                     new_data[target_key] = _get_nested_val(v, annotation)
                 else:

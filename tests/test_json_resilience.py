@@ -71,6 +71,32 @@ class TestJSONResilience(unittest.TestCase):
         # LayoutEngine output models might have them.
         pass
 
+    def test_dialogue_repair(self):
+        """Verify that string-based dialogue lists are repaired to speaker/text dicts."""
+        bad_json = json.dumps({
+            "title": "Story",
+            "synopsis": "Syn",
+            "scenes": [
+                {
+                    "id": 1,
+                    "location": "Church",
+                    "narrative_summary": "Sum",
+                    "panels": [
+                        {
+                            "id": 1,
+                            "description": "Desc",
+                            "dialogue": ["Santiago: I'll spend the night here."]
+                        }
+                    ]
+                }
+            ]
+        })
+        repaired = self.agent.repair_json(bad_json, ComicScript)
+        dialogue = repaired["scenes"][0]["panels"][0]["dialogue"]
+        self.assertEqual(len(dialogue), 1)
+        self.assertEqual(dialogue[0]["speaker"], "Santiago")
+        self.assertEqual(dialogue[0]["text"], "I'll spend the night here.")
+
     def test_case_insensitivity(self):
         ...
 
