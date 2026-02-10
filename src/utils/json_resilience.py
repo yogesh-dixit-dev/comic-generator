@@ -49,15 +49,21 @@ class JSONResilienceAgent:
         }
 
     def _is_pydantic_base(self, cls):
-        from typing import get_origin, get_args
-        if isinstance(cls, type) and issubclass(cls, BaseModel):
-            return True
-        # Handle Optional/Union
+        """Checks if a type is a Pydantic model, including Optional/Union variants."""
+        if cls is Any or cls is None: return False
+        
+        # 1. Direct match
+        try:
+            if isinstance(cls, type) and issubclass(cls, BaseModel):
+                return True
+        except TypeError: pass
+
+        # 2. Handle Union/Optional (Union[T, None])
         origin = get_origin(cls)
         if origin is not None:
             args = get_args(cls)
             for arg in args:
-                if self._is_pydantic_base(arg):
+                if arg is not None and self._is_pydantic_base(arg):
                     return True
         return False
 
@@ -146,39 +152,47 @@ class JSONResilienceAgent:
             return self._repair_align(val, self._get_base_model(annot))
         
         origin = get_origin(annot)
+        args = get_args(annot)
         base_annot = origin or annot
 
-        if base_annot is str and not isinstance(val, str):
+        # CASE 1: Expecting a String, but got a List (Common for Pronouns: ["He", "Him"])
+        if base_annot is str and isinstance(val, list):
+            logger.info(f"🔧 Repairing List -> String hallucination: {val}")
+            return "/".join([str(i) for i in val])
+
+        # CASE 2: Expecting a String, but got something else
+        if base_annot is str and not isinstance(val, str) and val is not None:
             return self._repair_flatten(val)
 
+        # CASE 3: Expecting a List
         if origin is list:
-            args = get_args(annot)
-            if args and self._is_pydantic_base(args[0]) and isinstance(val, list):
-                return [self._repair_align(item, self._get_base_model(args[0])) for item in val]
-            
-            is_dict = False
-            try: is_dict = issubclass(args[0], dict)
-            except: pass
+            if not isinstance(val, list):
+                if val: val = [val] # Wrap single item in list
+                else: return []
 
-            if args and (self._is_pydantic_base(args[0]) or is_dict) and isinstance(val, list):
-                target_fields_sub = []
-                if is_dict:
-                    target_fields_sub = ["speaker", "text"]
-                else:
-                    target_fields_sub = self._get_base_model(args[0]).model_fields
-                
-                if "speaker" in target_fields_sub and "text" in target_fields_sub:
-                    repaired_list = []
-                    for item in val:
-                        if isinstance(item, str):
-                            if ":" in item:
-                                parts = item.split(":", 1)
-                                repaired_list.append({"speaker": parts[0].strip(), "text": parts[1].strip()})
-                            else:
-                                repaired_list.append({"speaker": "Narrator", "text": item})
+            # Sub-case: List of Pydantic Models or Dicts (Dialogue Pattern)
+            if args and (self._is_pydantic_base(args[0]) or str(get_origin(args[0])).endswith("dict")):
+                repaired_list = []
+                for item in val:
+                    # If it's already right, keep it
+                    if isinstance(item, dict):
+                        repaired_list.append(self._repair_align(item, self._get_base_model(args[0])) if self._is_pydantic_base(args[0]) else item)
+                        continue
+                    
+                    # If it's a string, try to split it (Speaker: Text)
+                    if isinstance(item, str):
+                        logger.info(f"🔧 Repairing String -> Dict hallucination: '{item}'")
+                        if ":" in item:
+                            parts = item.split(":", 1)
+                            repaired_list.append({"speaker": parts[0].strip(), "text": parts[1].strip()})
                         else:
-                            repaired_list.append(item)
-                    return repaired_list
+                            repaired_list.append({"speaker": "Narrator", "text": item})
+                return repaired_list
+            
+            # Sub-case: List of Primitives (ensure members match)
+            if args and not self._is_pydantic_base(args[0]):
+                return [self._repair_nested(i, args[0]) for i in val]
+
         return val
 
     def _repair_align(self, current_data: Any, current_schema: Type[BaseModel], index: Optional[int] = None) -> Any:

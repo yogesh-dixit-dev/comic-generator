@@ -25,9 +25,18 @@ from src.agents.assembly.lettering import LetteringAgent
 from src.core.storage import HuggingFaceStorage, LocalStorage
 from src.core.checkpoint import PipelineState
 from src.utils.checkpoint_manager import CheckpointManager
+from src.agents.infrastructure.telemetry_agent import TelemetryAgent
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+log_file = "pipeline.log"
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_file, mode='w'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
 logger = logging.getLogger("ComicGen")
 
 def main():
@@ -239,6 +248,15 @@ def main():
             storage.sync(source_dir=args.output, target_dir="comic_output")
             logger.info("Synced output to Hugging Face Hub successfully.")
 
+        # Step 8: Telemetry & Log Analysis
+        logger.info("📊 Running Telemetry Analysis...")
+        telemetry_agent = TelemetryAgent("TelemetryObserver")
+        report = telemetry_agent.run("pipeline.log")
+        
+        logger.info("📈 --- Actionable Insights ---")
+        for suggestion in report.get("actionable_improvements", []):
+            logger.info(f"💡 {suggestion}")
+        
         # Ensure all background tasks complete
         logger.info("⏳ Finalizing background tasks...")
         checkpoint_mgr.shutdown()
