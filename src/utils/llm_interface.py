@@ -81,19 +81,33 @@ class LLMInterface:
                 is_local = "ollama" in self.model_name or "local" in self.model_name
                 
                 if is_local:
+                    # Simplify schema to avoid hallucination/mirroring of $defs
+                    # We create a simple "skeleton" JSON for the model to follow
+                    try:
+                        skeleton = schema.model_json_schema()
+                        # Clean up complex bits that confuse Llama 3.x
+                        if "$defs" in skeleton:
+                            # It's better to give a simplified example than a spec
+                            schema_desc = "JSON object following the structure of the provided story context."
+                        else:
+                            schema_desc = json.dumps(skeleton, indent=2)
+                    except:
+                        schema_desc = "Valid JSON matching the requested structure."
+
                     if attempt == 0:
                         enhanced_system = (
                             f"{system_prompt}\n\n"
-                            f"CRITICAL: You MUST return a JSON object that matches this EXACT schema:\n"
-                            f"{schema_json}\n\n"
-                            f"Response MUST be valid JSON only. No conversational filler, no explanations."
+                            f"IMPORTANT: You MUST return ONLY a valid JSON object. No conversation, no preamble.\n"
+                            f"CRITICAL: Do NOT include schema metadata like '$defs', 'definitions', 'properties', or 'type'.\n"
+                            f"ONLY OUTPUT THE DATA CONTENT.\n"
+                            f"STRUCTURE REFERENCE:\n{schema_desc}"
                         )
                     else:
                         # Even stricter on retries
                         enhanced_system = (
-                            f"You failed to provide valid JSON in the previous attempt.\n"
-                            f"YOU MUST RETURN ONLY THE JSON OBJECT. NO TEXT BEFORE OR AFTER.\n"
-                            f"SCHEMA: {schema_json}"
+                            f"Your previous output was NOT valid data. You mirrored the schema metadata instead of generating content.\n"
+                            f"YOU MUST RETURN ONLY THE DATA. NO TEXT BEFORE OR AFTER.\n"
+                            f"DATA STRUCTURE:\n{schema_desc}"
                         )
                 else:
                     # For robust models (GPT-4, etc.), use the standard prompt but still include schema if not present
