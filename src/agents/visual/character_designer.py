@@ -67,16 +67,35 @@ class CharacterDesignAgent(BaseAgent):
                 schema=CharacterList
             )
             
-            # Basic Deduplication
-            unique_chars = {}
-            for char in result.characters:
-                if char.name.lower() not in unique_chars:
-                    unique_chars[char.name.lower()] = char
-                else:
-                    # Merge description if possible? For now just keep the first one
-                    self.logger.warning(f"Duplicate character '{char.name}' found during design. Keeping first iteration.")
+            # Smart Deduplication & Alias Merging
+            characters_by_name = {}
             
-            return list(unique_chars.values())
+            for char in result.characters:
+                # 1. Normalize name
+                canonical = char.name.strip().lower()
+                
+                # 2. Check if this character is already known via an alias
+                existing_char = None
+                for known_char in characters_by_name.values():
+                    # If current char name matches an existing char's alias OR vice versa
+                    if canonical == known_char.name.lower() or \
+                       any(a.lower() == canonical for a in known_char.aliases) or \
+                       any(a.lower() == known_char.name.lower() for a in char.aliases):
+                        existing_char = known_char
+                        break
+                
+                if existing_char:
+                    # Merge logic: Combine aliases and append descriptions
+                    existing_char.aliases = list(set(existing_char.aliases + char.aliases + [char.name]))
+                    if char.description not in existing_char.description:
+                        existing_char.description += f" | {char.description}"
+                    if char.personality not in existing_char.personality:
+                        existing_char.personality += f" ; {char.personality}"
+                    self.logger.info(f"Merged duplicate character profile for '{char.name}' into '{existing_char.name}'.")
+                else:
+                    characters_by_name[canonical] = char
+            
+            return list(characters_by_name.values())
         except Exception as e:
             self.logger.error(f"Failed to generate character profiles: {e}")
             raise

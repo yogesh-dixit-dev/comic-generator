@@ -115,229 +115,163 @@ class JSONResilienceAgent:
                 obj[name] = "..."
         return obj
 
-    def repair_json(self, raw_json: str, schema: Type[T]) -> Dict[str, Any]:
-        """
-        Performs heuristic repair on JSON to align it with the schema.
-        Fixes common field hallucinations and structural mismatches.
-        """
+    def repair_json(self, raw_json: str, schema: Type[T]) -> Any:
         try:
             data = json.loads(raw_json)
-        except Exception as e:
-            # If loads fails, try the ultra-aggressive regex-based repair (pre-loads)
+        except Exception:
             cleaned = self._pre_process_json_string(raw_json)
             data = json.loads(cleaned)
 
-        # Shared Helpers
-        def _flatten_to_string(o: Any) -> str:
-            if isinstance(o, str): return o
-            if isinstance(o, (int, float, bool)): return str(o)
-            if isinstance(o, dict):
-                return "; ".join([f"{k}: {_flatten_to_string(v)}" for k, v in o.items()])
-            if isinstance(o, list):
-                return " | ".join([_flatten_to_string(i) for i in o])
-            return str(o)
-
-        def _get_nested_val(val, annot):
-            if self._is_pydantic_base(annot):
-                return _align_fields(val, self._get_base_model(annot))
-            
-            origin = get_origin(annot)
-            base_annot = origin or annot
-
-            # Case: Expected String, but got Object/List
-            if base_annot is str and not isinstance(val, str):
-                return _flatten_to_string(val)
-
-            if origin is list:
-                from typing import get_args
-                args = get_args(annot)
-                if args and self._is_pydantic_base(args[0]) and isinstance(val, list):
-                    return [_align_fields(item, self._get_base_model(args[0])) for item in val]
-                
-                # Heuristic: Repair Dialogue/List Hallucination
-                is_dict = False
-                try: is_dict = issubclass(args[0], dict)
-                except: pass
-
-                if args and (self._is_pydantic_base(args[0]) or is_dict) and isinstance(val, list):
-                    target_fields_sub = []
-                    if is_dict:
-                        target_fields_sub = ["speaker", "text"]
-                    else:
-                        target_fields_sub = self._get_base_model(args[0]).model_fields
-                    
-                    if "speaker" in target_fields_sub and "text" in target_fields_sub:
-                        repaired_list = []
-                        for item in val:
-                            if isinstance(item, str):
-                                if ":" in item:
-                                    parts = item.split(":", 1)
-                                    repaired_list.append({"speaker": parts[0].strip(), "text": parts[1].strip()})
-                                else:
-                                    repaired_list.append({"speaker": "Narrator", "text": item})
-                            else:
-                                repaired_list.append(item)
-                        return repaired_list
-                    
-                    if not is_dict:
-                        return [_align_fields(item, self._get_base_model(args[0])) for item in val]
-            return val
-
-        # Recursive field mapper
-        def _align_fields(current_data: Any, current_schema: Type[BaseModel]):
-            if not isinstance(current_data, dict):
-                return current_data
-
-            new_data = {}
-            target_fields = current_schema.model_fields
-            
-            for k, v in current_data.items():
-                from typing import get_origin
-                # 1. Direct match
-                if k in target_fields:
-                    target_key = k
-                # 2. Alias match
-                elif k.lower() in self.field_aliases:
-                    target_key = self.field_aliases[k.lower()]
-                    if target_key not in target_fields: target_key = k # Check if target exists in this specific model
-                # 3. Case-insensitive match
-                else:
-                    target_key = k
-                    for target in target_fields:
-                        if target.lower() == k.lower():
-                            target_key = target
-                            break
-                
-                # Recursive step if value is a dict or list of dicts
-                field_info = target_fields.get(target_key)
-                if field_info:
-                    processed_val = _get_nested_val(v, field_info.annotation)
-
-                    # Smart Concatenation: If the target is a string and already has a value, append
-                    if target_key in new_data and isinstance(processed_val, str) and isinstance(new_data[target_key], str):
-                        if processed_val not in new_data[target_key]:
-                            new_data[target_key] = f"{new_data[target_key]}; {processed_val}"
-                    else:
-                        new_data[target_key] = processed_val
-
-                    # Heuristic for INT/FLOAT fields
-                    try:
-                        origin = get_origin(field_info.annotation)
-                        base_annot = origin or field_info.annotation
-                        
-                        if base_annot in (int, float):
-                            current_val = v
-                            # Handle Dict of scores (e.g. {'visuals': 6, 'pacing': 8})
-                            if isinstance(v, dict):
-                                scores = [float(x) for x in v.values() if isinstance(x, (int, float, str)) and str(x).replace('.','',1).isdigit()]
-                                if scores: current_val = sum(scores) / len(scores)
-                            
-                            if isinstance(v, str):
-                                # 1. Handle fractions like "6/10"
-                                if "/" in v:
-                                    try:
-                                        num, den = v.split("/")
-                                        current_val = float(num) / float(den) * 10.0 # Standardize to 10
-                                    except: pass
-                                else:
-                                    # 2. Extract first number
-                                    import re
-                                    digits = re.findall(r'[-+]?\d*\.\d+|\d+', v)
-                                    if digits: current_val = float(digits[0])
-                            
-                            # 3. Handle normalization (if score > 10, assume /100)
-                            if isinstance(current_val, (int, float)) and current_val > 10 and "score" in target_key.lower():
-                                current_val = current_val / 10.0
-                            
-                            # 4. Final Type cast
-                            if base_annot is int:
-                                v = int(float(current_val))
-                            else:
-                                v = float(current_val)
-                            new_data[target_key] = v
-                    except: pass
-
-                    # Heuristic for BOOL fields
-                    try:
-                        origin = get_origin(field_info.annotation)
-                        base_annot = origin or field_info.annotation
-                        if base_annot is bool:
-                            curr = new_data[target_key]
-                            if isinstance(curr, str):
-                                val_norm = curr.lower().strip()
-                                if val_norm in ("yes", "true", "y", "1", "pass", "partially", "mostly"): 
-                                    new_data[target_key] = True
-                                elif val_norm in ("no", "false", "n", "0", "fail", "failed"): 
-                                    new_data[target_key] = False
-                    except: pass
-                else:
-                    # Key not in schema, keep it for fallback processing
-                    pass
-            
-            # Post-alignment fallbacks for required fields
-            # 1. Sequence ID Generation
-            if "id" in target_fields and "id" not in new_data:
-                # If we are in recursive mode we don't know the index, but we can try to find an excess field that looks like un ID
-                # or just set a placeholder. 
-                # Better yet: the parent list processor should handle this.
-                pass
-
-            # 2. Scene-Specific Fallbacks
-            if "location" in target_fields and not new_data.get("location"):
-                for fallback in ["setting", "title", "description", "scene"]:
-                    if current_data.get(fallback) and len(str(current_data.get(fallback))) < 100:
-                        new_data["location"] = str(current_data.get(fallback))
-                        break
-                if not new_data.get("location"):
-                    new_data["location"] = "Unknown Location"
-
-            if "narrative_summary" in target_fields and not new_data.get("narrative_summary"):
-                for fallback in ["scene", "description", "text", "summary"]:
-                    if current_data.get(fallback):
-                        new_data["narrative_summary"] = str(current_data.get(fallback))
-                        break
-
-            # 3. Personality Fallbacks
-            if "personality" in target_fields and not new_data.get("personality"):
-                # If we have description but no personality, or if personality is just missing
-                new_data["personality"] = "Determined Character"
-
-            if "pronouns" in target_fields and not new_data.get("pronouns"):
-                new_data["pronouns"] = "They/Them"
-
-            # 4. Style Guide Dict-to-String
-            if "style_guide" in target_fields and isinstance(current_data.get("style_guide"), dict):
-                style_dict = current_data.get("style_guide")
-                style_str = "; ".join([f"{k}: {v}" for k, v in style_dict.items()])
-                new_data["style_guide"] = style_str
-
-            # 5. Critique Result Dict-to-Bool
-            if "passed" in target_fields and isinstance(current_data.get("passed"), dict):
-                # If passed is a dict like {"visuals": True, ...}, we take the min
-                new_data["passed"] = all(current_data.get("passed").values())
-
-            return new_data
-
-        # Wrap _align_fields to handle list sequence IDs
-        def _process_item(item, schema_type, index):
-            aligned = _align_fields(item, schema_type)
-            if "id" in schema_type.model_fields and (aligned.get("id") is None):
-                aligned["id"] = index + 1
-            return aligned
-
-        # Top level return with index awareness for lists
         if isinstance(data, list) and self._is_pydantic_base(schema):
-            return [_process_item(item, self._get_base_model(schema), i) for i, item in enumerate(data)]
+            base_model = self._get_base_model(schema)
+            return [self._repair_align(item, base_model, i) for i, item in enumerate(data)]
         
-        # If it's a dict
-        final_data = _align_fields(data, schema)
+        final_data = self._repair_align(data, schema)
         
-        # Ensure top level lists (like scenes) have IDs
         if "scenes" in final_data and isinstance(final_data["scenes"], list):
             from src.core.models import Scene
-            final_data["scenes"] = [_process_item(s, Scene, i) for i, s in enumerate(final_data["scenes"])]
+            final_data["scenes"] = [self._repair_align(s, Scene, i) for i, s in enumerate(final_data["scenes"])]
             
         return final_data
+
+    def _repair_flatten(self, o: Any) -> str:
+        if isinstance(o, str): return o
+        if isinstance(o, (int, float, bool)): return str(o)
+        if isinstance(o, dict):
+            return "; ".join([f"{k}: {self._repair_flatten(v)}" for k, v in o.items()])
+        if isinstance(o, list):
+            return " | ".join([self._repair_flatten(i) for i in o])
+        return str(o)
+
+    def _repair_nested(self, val: Any, annot: Any) -> Any:
+        if self._is_pydantic_base(annot):
+            return self._repair_align(val, self._get_base_model(annot))
+        
+        origin = get_origin(annot)
+        base_annot = origin or annot
+
+        if base_annot is str and not isinstance(val, str):
+            return self._repair_flatten(val)
+
+        if origin is list:
+            args = get_args(annot)
+            if args and self._is_pydantic_base(args[0]) and isinstance(val, list):
+                return [self._repair_align(item, self._get_base_model(args[0])) for item in val]
+            
+            is_dict = False
+            try: is_dict = issubclass(args[0], dict)
+            except: pass
+
+            if args and (self._is_pydantic_base(args[0]) or is_dict) and isinstance(val, list):
+                target_fields_sub = []
+                if is_dict:
+                    target_fields_sub = ["speaker", "text"]
+                else:
+                    target_fields_sub = self._get_base_model(args[0]).model_fields
+                
+                if "speaker" in target_fields_sub and "text" in target_fields_sub:
+                    repaired_list = []
+                    for item in val:
+                        if isinstance(item, str):
+                            if ":" in item:
+                                parts = item.split(":", 1)
+                                repaired_list.append({"speaker": parts[0].strip(), "text": parts[1].strip()})
+                            else:
+                                repaired_list.append({"speaker": "Narrator", "text": item})
+                        else:
+                            repaired_list.append(item)
+                    return repaired_list
+        return val
+
+    def _repair_align(self, current_data: Any, current_schema: Type[BaseModel], index: Optional[int] = None) -> Any:
+        if not isinstance(current_data, dict):
+            return current_data
+
+        new_data = {}
+        target_fields = current_schema.model_fields
+        
+        for k, v in current_data.items():
+            if k in target_fields:
+                target_key = k
+            elif k.lower() in self.field_aliases:
+                target_key = self.field_aliases[k.lower()]
+                if target_key not in target_fields: target_key = k
+            else:
+                target_key = k
+                for target in target_fields:
+                    if target.lower() == k.lower():
+                        target_key = target
+                        break
+            
+            field_info = target_fields.get(target_key)
+            if field_info:
+                processed_val = self._repair_nested(v, field_info.annotation)
+
+                if target_key in new_data and isinstance(processed_val, str) and isinstance(new_data[target_key], str):
+                    if processed_val not in new_data[target_key]:
+                        new_data[target_key] = f"{new_data[target_key]}; {processed_val}"
+                else:
+                    new_data[target_key] = processed_val
+
+                # Heuristics
+                try:
+                    base_annot = get_origin(field_info.annotation) or field_info.annotation
+                    if base_annot in (int, float):
+                        cv = v
+                        if isinstance(v, dict):
+                            scores = [float(x) for x in v.values() if isinstance(x, (int, float, str)) and str(x).replace('.','',1).isdigit()]
+                            if scores: cv = sum(scores) / len(scores)
+                        if isinstance(v, str):
+                            if "/" in v:
+                                try:
+                                    n, d = v.split("/")
+                                    cv = float(n) / float(d) * 10.0
+                                except: pass
+                            else:
+                                digits = re.findall(r'[-+]?\d*\.\d+|\d+', v)
+                                if digits: cv = float(digits[0])
+                        if isinstance(cv, (int, float)) and cv > 10 and "score" in target_key.lower():
+                            cv = cv / 10.0
+                        new_data[target_key] = int(cv) if base_annot is int else float(cv)
+                    
+                    if base_annot is bool:
+                        curr = new_data[target_key]
+                        if isinstance(curr, str):
+                            vn = curr.lower().strip()
+                            if vn in ("yes", "true", "y", "1", "pass", "partially", "mostly"): new_data[target_key] = True
+                            elif vn in ("no", "false", "n", "0", "fail", "failed"): new_data[target_key] = False
+                except: pass
+
+        # Post-alignment fallbacks
+        if "id" in target_fields and new_data.get("id") is None and index is not None:
+            new_data["id"] = index + 1
+
+        if "location" in target_fields and not new_data.get("location"):
+            for fb in ["setting", "title", "description", "scene"]:
+                if current_data.get(fb) and len(str(current_data.get(fb))) < 100:
+                    new_data["location"] = str(current_data.get(fb))
+                    break
+            if not new_data.get("location"): new_data["location"] = "Unknown Location"
+
+        if "narrative_summary" in target_fields and not new_data.get("narrative_summary"):
+            for fb in ["scene", "description", "text", "summary"]:
+                if current_data.get(fb):
+                    new_data["narrative_summary"] = str(current_data.get(fb))
+                    break
+
+        if "personality" in target_fields and not new_data.get("personality"):
+            new_data["personality"] = "Determined Character"
+
+        if "pronouns" in target_fields and not new_data.get("pronouns"):
+            new_data["pronouns"] = "They/Them"
+
+        if "style_guide" in target_fields and isinstance(current_data.get("style_guide"), dict):
+            new_data["style_guide"] = "; ".join([f"{ks}: {vs}" for ks, vs in current_data.get("style_guide").items()])
+
+        if "passed" in target_fields and isinstance(current_data.get("passed"), dict):
+            new_data["passed"] = all(current_data.get("passed").values())
+
+        return new_data
 
     def _pre_process_json_string(self, text: str) -> str:
         """Fixes common structural JSON errors at a raw string level."""
