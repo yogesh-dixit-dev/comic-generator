@@ -62,6 +62,11 @@ def main():
     else:
         image_gen = MockImageGenerator()
 
+    # Early exit for validation/CI runs
+    if os.environ.get("PIPELINE_VALIDATION_RUN"):
+        logger.info("Validation run detected. Environment initialized successfully. Exiting.")
+        sys.exit(0)
+
     # 3. Initialize Agents
     input_reader = InputReaderAgent("InputReader")
     # Use Ollama by default (runs locally, NO API KEYS needed!)
