@@ -18,20 +18,27 @@ class LLMInterface:
 
     def _extract_json(self, text: str) -> str:
         """
-        Extracts JSON content from a string that might be wrapped in markdown code blocks.
+        Extracts JSON content from a string that might be wrapped in markdown code blocks
+        or contains conversational preamble.
         """
         # Trim whitespace
         text = text.strip()
         
-        # Check for markdown code blocks
+        # 1. Check for markdown code blocks
         import re
         json_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
         if json_match:
             return json_match.group(1).strip()
             
-        # If no block, but starts with '{' or '[', assume it's raw JSON
-        if text.startswith("{") or text.startswith("["):
-            return text
+        # 2. Find the outermost '{' and '}'
+        # We look for the first '{' that likely starts a key
+        import re
+        start_match = re.search(r'\{\s*"', text)
+        start_index = start_match.start() if start_match else text.find('{')
+        end_index = text.rfind('}')
+        
+        if start_index != -1 and end_index != -1 and end_index > start_index:
+            return text[start_index:end_index+1].strip()
             
         return text
 
