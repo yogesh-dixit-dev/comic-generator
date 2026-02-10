@@ -114,30 +114,31 @@ def main():
             logger.error(f"❌ Input from '{args.input}' is empty! Please ensure the file has content.")
             return
         
-        logger.info(f"📄 Processing story ({len(raw_text)} characters)...")
-        
-        # Step 2: Write Script (Chunked for long stories)
-        from src.utils.script_consolidator import ScriptConsolidator
-        consolidator = ScriptConsolidator()
-        
-        # Decide chunk size. 2000 words is safe for Llama 3.2
-        chunks = input_reader.chunk_text(raw_text, max_words=2000)
-        logger.info(f"🧩 Split story into {len(chunks)} chunk(s).")
-
         # --- Checkpoint System Initialization ---
         checkpoint_mgr = CheckpointManager(storage)
         input_hash = checkpoint_mgr.get_input_hash(args.input)
-        state = checkpoint_mgr.load_checkpoint(input_hash)
         
-        if not state:
-            logger.info("🆕 No existing checkpoint found. Starting fresh.")
-            state = PipelineState(input_hash=input_hash)
-        else:
-            logger.info(f"⏭️ Resuming pipeline from stage: {state.stage}")
-
         # Step 2: Write Script (Chunked for long stories)
         from src.utils.script_consolidator import ScriptConsolidator
         consolidator = ScriptConsolidator()
+        
+        # Step 1: Parallel Narrative Processing
+        logger.info(f"📄 Processing story ({len(raw_text)} characters)...")
+        chunks = input_reader.chunk_text(raw_text, max_words=2000)
+        logger.info(f"🧩 Split story into {len(chunks)} chunk(s).")
+        
+        # Limit concurrency for local models to prevent resource saturation
+        is_local_reasoning = "ollama" in args.reasoning_model or "local" in args.reasoning_model
+        max_narrative_workers = 2 if is_local_reasoning else 5
+        
+        # Check for checkpoint
+        state = checkpoint_mgr.load_checkpoint(input_hash)
+        if state:
+            # Assuming state.processed_chunks and state.processed_scenes are tracked in PipelineState
+            # If not, this logging line might need adjustment based on actual state structure
+            logger.info(f"🔄 Resuming from checkpoint. Last chunk index: {state.last_chunk_index}, Master script scenes: {len(state.master_script.scenes) if state.master_script else 0}.")
+        else:
+            state = PipelineState(input_hash=input_hash)
         
         if state.master_script:
             consolidator.master_script = state.master_script

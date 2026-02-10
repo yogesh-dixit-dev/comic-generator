@@ -1,4 +1,5 @@
 import os
+import threading
 from typing import Type, TypeVar, Optional, Any, Dict
 from pydantic import BaseModel
 import litellm
@@ -12,6 +13,7 @@ T = TypeVar("T", bound=BaseModel)
 
 class LLMInterface:
     _resilience_agent = None  # Class-level cache for efficiency
+    _ollama_semaphore = threading.Semaphore(1) # Serialize local LLM calls to prevent timeouts
 
     def __init__(self, model_name: str = "gpt-4o", api_key: Optional[str] = None):
         self.model_name = model_name
@@ -78,72 +80,72 @@ class LLMInterface:
         # Pre-cache schema skeleton
         resilience = LLMInterface._resilience_agent
         schema_skeleton = resilience.generate_deep_skeleton(schema)
+        is_local = "ollama" in self.model_name or "local" in self.model_name
         
         for attempt in range(max_retries):
-            try:
-                logger.info(f"LLM Request (Attempt {attempt + 1}/{max_retries}) using {self.model_name}...")
-                
-                is_local = "ollama" in self.model_name or "local" in self.model_name
-                
-                if is_local:
-                    if attempt == 0:
-                        enhanced_system = (
-                            f"{system_prompt}\n\n"
-                            f"IMPORTANT: Respond ONLY with valid JSON.\n"
-                            f"CRITICAL: Follow this exact structure:\n"
-                            f"{schema_skeleton}\n"
-                        )
-                    else:
-                        enhanced_system = (
-                            f"Previous response failed validation. Hallucinated fields detected.\n"
-                            f"YOU MUST MATCH THIS EXACT STRUCTURE:\n"
-                            f"{schema_skeleton}\n"
-                            f"Respond ONLY with the JSON object."
-                        )
-                else:
-                    enhanced_system = f"{system_prompt}\n\nSchema: {json.dumps(schema.model_json_schema(), indent=2)}"
-
-                # LiteLLM/Ollama Optimizations
-                completion_kwargs = {
-                    "model": self.model_name,
-                    "messages": [
-                        {"role": "system", "content": enhanced_system},
-                        {"role": "user", "content": prompt}
-                    ],
-                    "api_key": self.api_key,
-                    "timeout": 180
-                }
-                
-                # Add Ollama-specific memory persistence
-                if is_local:
-                    completion_kwargs["extra_headers"] = {"keep_alive": "20m"} # Keep model in VRAM for 20 mins
-                    # Note: Depending on litellm version, may need to pass as part of model_kwargs
+            # Use semaphore for local models to prevent resource contention
+            with LLMInterface._ollama_semaphore if is_local else threading.Lock():
+                try:
+                    logger.info(f"LLM Request (Attempt {attempt + 1}/{max_retries}) using {self.model_name}...")
                     
-                response = completion(**completion_kwargs)
-                
-                content = response.choices[0].message.content
-                if not content or not content.strip():
-                    raise ValueError("Empty response")
+                    if is_local:
+                        if attempt == 0:
+                            enhanced_system = (
+                                f"{system_prompt}\n\n"
+                                f"IMPORTANT: Respond ONLY with valid JSON.\n"
+                                f"CRITICAL: Follow this exact structure:\n"
+                                f"{schema_skeleton}\n"
+                            )
+                        else:
+                            enhanced_system = (
+                                f"Previous response failed validation. Hallucinated fields detected.\n"
+                                f"YOU MUST MATCH THIS EXACT STRUCTURE:\n"
+                                f"{schema_skeleton}\n"
+                                f"Respond ONLY with the JSON object."
+                            )
+                    else:
+                        enhanced_system = f"{system_prompt}\n\nSchema: {json.dumps(schema.model_json_schema(), indent=2)}"
 
-                json_content = self._extract_json(content)
-                
-                if is_local:
-                    data = resilience.repair_json(json_content, schema)
-                else:
-                    data = json.loads(json_content)
+                    # LiteLLM/Ollama Optimizations
+                    completion_kwargs = {
+                        "model": self.model_name,
+                        "messages": [
+                            {"role": "system", "content": enhanced_system},
+                            {"role": "user", "content": prompt}
+                        ],
+                        "api_key": self.api_key,
+                        "timeout": 600 # Increased from 180 to 600 for high-complexity chunks
+                    }
+                    
+                    # Add Ollama-specific memory persistence
+                    if is_local:
+                        completion_kwargs["keep_alive"] = "20m"
+                        
+                    response = completion(**completion_kwargs)
+                    
+                    content = response.choices[0].message.content
+                    if not content or not content.strip():
+                        raise ValueError("Empty response")
 
-                return schema.model_validate(data)
+                    json_content = self._extract_json(content)
+                    
+                    if is_local:
+                        data = resilience.repair_json(json_content, schema)
+                    else:
+                        data = json.loads(json_content)
 
-            except Exception as e:
-                last_error = e
-                logger.warning(f"Attempt {attempt + 1} failed: {str(e)}")
-                
-                if attempt < max_retries - 1:
-                    # Reduced sleep for local models to minimize perceived latency
-                    sleep_time = 1 if is_local else 3 * (attempt + 1)
-                    import time
-                    time.sleep(sleep_time)
-                continue
+                    return schema.model_validate(data)
+
+                except Exception as e:
+                    last_error = e
+                    logger.warning(f"Attempt {attempt + 1} failed: {str(e)}")
+                    
+                    if attempt < max_retries - 1:
+                        # Reduced sleep for local models to minimize perceived latency
+                        sleep_time = 1 if is_local else 3 * (attempt + 1)
+                        import time
+                        time.sleep(sleep_time)
+                    continue
         
         raise last_error
 

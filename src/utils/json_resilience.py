@@ -149,50 +149,50 @@ class JSONResilienceAgent:
 
     def _repair_nested(self, val: Any, annot: Any) -> Any:
         if self._is_pydantic_base(annot):
-            return self._repair_align(val, self._get_base_model(annot))
+            if isinstance(val, (dict, list)):
+                return self._repair_align(val, self._get_base_model(annot))
+            return val
         
         origin = get_origin(annot)
         args = get_args(annot)
         base_annot = origin or annot
 
-        # CASE 1: Expecting a String, but got a List (Common for Pronouns: ["He", "Him"])
+        # CASE 1: Expecting a String, but got a List (Common for Pronouns)
         if base_annot is str and isinstance(val, list):
-            logger.info(f"🔧 Repairing List -> String hallucination: {val}")
             return "/".join([str(i) for i in val])
 
-        # CASE 2: Expecting a String, but got something else
-        if base_annot is str and not isinstance(val, str) and val is not None:
-            return self._repair_flatten(val)
-
-        # CASE 3: Expecting a List
+        # CASE 2: Expecting a List
         if origin is list:
             if not isinstance(val, list):
-                if val: val = [val] # Wrap single item in list
+                if val: val = [val]
                 else: return []
 
             # Sub-case: List of Pydantic Models or Dicts (Dialogue Pattern)
-            if args and (self._is_pydantic_base(args[0]) or str(get_origin(args[0])).endswith("dict")):
+            # We look for 'dict' in the string representation of the argument origin
+            inner_type = args[0] if args else Any
+            inner_origin = get_origin(inner_type)
+            
+            is_dict_like = (
+                self._is_pydantic_base(inner_type) or 
+                (inner_origin is not None and issubclass(inner_origin, dict)) or
+                inner_type is dict
+            )
+
+            if is_dict_like:
                 repaired_list = []
                 for item in val:
-                    # If it's already right, keep it
                     if isinstance(item, dict):
-                        repaired_list.append(self._repair_align(item, self._get_base_model(args[0])) if self._is_pydantic_base(args[0]) else item)
-                        continue
-                    
-                    # If it's a string, try to split it (Speaker: Text)
-                    if isinstance(item, str):
-                        logger.info(f"🔧 Repairing String -> Dict hallucination: '{item}'")
+                        repaired_list.append(self._repair_align(item, self._get_base_model(inner_type)) if self._is_pydantic_base(inner_type) else item)
+                    elif isinstance(item, str) and item.strip():
+                        # Aggressive Dialogue Splitter
                         if ":" in item:
                             parts = item.split(":", 1)
                             repaired_list.append({"speaker": parts[0].strip(), "text": parts[1].strip()})
                         else:
-                            repaired_list.append({"speaker": "Narrator", "text": item})
+                            repaired_list.append({"speaker": "Narrator", "text": item.strip()})
+                    elif item: # Catch-all for other non-empty types
+                         repaired_list.append({"speaker": "Narrator", "text": str(item)})
                 return repaired_list
-            
-            # Sub-case: List of Primitives (ensure members match)
-            if args and not self._is_pydantic_base(args[0]):
-                return [self._repair_nested(i, args[0]) for i in val]
-
         return val
 
     def _repair_align(self, current_data: Any, current_schema: Type[BaseModel], index: Optional[int] = None) -> Any:
@@ -305,15 +305,15 @@ class JSONResilienceAgent:
         text = re.sub(r'}\s*{', '}, {', text)
         text = re.sub(r']\s*\[', '], [', text)
         
-        # 3. Add missing commas between key-value pairs (aggressive)
-        # Matches: "key": value "key":
-        # We look for a pattern where a value (string, number, or boolean) is followed by a quote without a comma.
-        # This is strictly a fallback for when the initial parse fails.
-        text = re.sub(r'("\s*:\s*(?:(?:"[^"]*")|(?:\d+(?:\.\d+)?)|(?:true|false|null)))\s*(")', r'\1, \2', text)
+        # 3. Add missing commas between key-value pairs (more robust)
+        # Matches: "key": "value" "next_key":
+        # We target specific value types followed by a quote
+        text = re.sub(r'("(?:[^"\\]|\\.)*"\s*:\s*(?:"(?:[^"\\]|\\.)*"|\d+(?:\.\d+)?|true|false|null))\s*(")', r'\1, \2', text)
         
-        # 4. Handle truncated JSON (unclosed brackets/braces)
-        # If the string ends abruptly, try to close it. 
-        # (This is very heuristic, but better than a hard crash)
+        # 4. Fix missing commas after closing braces/brackets followed by a quote (next key)
+        text = re.sub(r'([}\]])\s*(")', r'\1, \2', text)
+
+        # 5. Handle truncated JSON (unclosed brackets/braces)
         open_braces = text.count('{') - text.count('}')
         open_brackets = text.count('[') - text.count(']')
         if open_braces > 0: text += '}' * open_braces
