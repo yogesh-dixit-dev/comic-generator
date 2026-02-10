@@ -92,7 +92,11 @@ def main():
         # Step 1: Read Input
         raw_text = input_reader.process(args.input)
         
-        # Step 2: Write Script
+        if not raw_text or not raw_text.strip():
+            logger.error(f"❌ Input from '{args.input}' is empty! Please ensure the file has content.")
+            return
+        
+        logger.info(f"📄 Processing story ({len(raw_text)} characters)...")
         # TODO: Implement chunking loop here for long texts. For MVP, process single chunk.
         # chunks = input_reader.chunk_text(raw_text)
         # For simplicity in V1, we just take the first chunk or whole text if small
