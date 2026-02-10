@@ -63,14 +63,31 @@ class CheckpointManager:
             logger.warning(f"⚠️ Cloud sync for checkpoint failed: {e}. Progress is still saved locally.")
 
     def load_checkpoint(self, input_hash: str) -> Optional[PipelineState]:
-        """Loads the checkpoint for a specific input hash."""
+        """Loads the checkpoint for a specific input hash, pulling from cloud if needed."""
         path = self.get_checkpoint_path(input_hash)
         
+        # 1. Try cloud pull if local missing
+        if not os.path.exists(path) and isinstance(self.storage, HuggingFaceStorage):
+            try:
+                logger.info(f"🔍 Checkpoint missing locally. Attempting to pull from Hugging Face: {path}")
+                # Use HuggingFace Hub API to download single file if it exists
+                from huggingface_hub import hf_hub_download
+                hf_hub_download(
+                    repo_id=self.storage.repo_id,
+                    filename=path.replace("\\", "/"), # HF uses forward slashes
+                    repo_type="dataset",
+                    local_dir=".",
+                    token=self.storage.api.token
+                )
+                logger.info("☁️ Successfully pulled checkpoint from Hugging Face.")
+            except Exception as e:
+                logger.debug(f"Hugging Face pull failed or file does not exist: {e}")
+
         if not os.path.exists(path):
             return None
 
         try:
-            with open(path, 'r') as f:
+            with open(path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
             # Safe Unmarshalling: Try strict first, then fallback to dict-level repair
@@ -80,9 +97,9 @@ class CheckpointManager:
             
         except ValidationError as ve:
             logger.warning(f"⚠️ Checkpoint schema mismatch: {ve}. Attempting partial recovery...")
-            # Fallback: We might have updated models. We should try to extract what we can.
-            # For now, we return None to be safe, or we could implement a migration.
-            return None
+            # Fallback: try to return the raw data if we can't validate (for development)
+            try: return PipelineState.model_construct(**data)
+            except: return None
         except Exception as e:
             logger.error(f"❌ Failed to load checkpoint: {e}")
             return None
