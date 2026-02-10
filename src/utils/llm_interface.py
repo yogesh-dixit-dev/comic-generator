@@ -81,33 +81,45 @@ class LLMInterface:
                 is_local = "ollama" in self.model_name or "local" in self.model_name
                 
                 if is_local:
-                    # Simplify schema to avoid hallucination/mirroring of $defs
-                    # We create a simple "skeleton" JSON for the model to follow
+                    # Generate a concrete skeleton template instead of a technical spec
+                    def _get_skeleton(json_schema: dict) -> dict:
+                        """Recursively creates a minimal skeleton from a JSON schema."""
+                        if "properties" in json_schema:
+                            obj = {}
+                            for k, v in json_schema["properties"].items():
+                                if "type" in v:
+                                    if v["type"] == "array": obj[k] = []
+                                    elif v["type"] == "object": obj[k] = {}
+                                    elif v["type"] == "integer": obj[k] = 0
+                                    else: obj[k] = "..."
+                                else:
+                                    obj[k] = "..."
+                            return obj
+                        return {}
+
                     try:
-                        skeleton = schema.model_json_schema()
-                        # Clean up complex bits that confuse Llama 3.x
-                        if "$defs" in skeleton:
-                            # It's better to give a simplified example than a spec
-                            schema_desc = "JSON object following the structure of the provided story context."
-                        else:
-                            schema_desc = json.dumps(skeleton, indent=2)
+                        full_schema = schema.model_json_schema()
+                        # We only show the top-level skeleton to keep it concise
+                        skeleton = _get_skeleton(full_schema)
+                        schema_desc = json.dumps(skeleton, indent=2)
                     except:
-                        schema_desc = "Valid JSON matching the requested structure."
+                        schema_desc = "{ \"title\": \"...\", \"synopsis\": \"...\", \"scenes\": [] }"
 
                     if attempt == 0:
                         enhanced_system = (
                             f"{system_prompt}\n\n"
                             f"IMPORTANT: You MUST return ONLY a valid JSON object. No conversation, no preamble.\n"
-                            f"CRITICAL: Do NOT include schema metadata like '$defs', 'definitions', 'properties', or 'type'.\n"
-                            f"ONLY OUTPUT THE DATA CONTENT.\n"
-                            f"STRUCTURE REFERENCE:\n{schema_desc}"
+                            f"CRITICAL: Your output MUST follow this exact top-level structure:\n"
+                            f"{schema_desc}\n\n"
+                            f"Do NOT invent nested levels (like 'part1' or 'story'). Use the keys above directly."
                         )
                     else:
                         # Even stricter on retries
                         enhanced_system = (
-                            f"Your previous output was NOT valid data. You mirrored the schema metadata instead of generating content.\n"
-                            f"YOU MUST RETURN ONLY THE DATA. NO TEXT BEFORE OR AFTER.\n"
-                            f"DATA STRUCTURE:\n{schema_desc}"
+                            f"Your previous output was invalid. You ignored the required structure.\n"
+                            f"YOU MUST RETURN ONLY THE DATA matching this structure:\n"
+                            f"{schema_desc}\n\n"
+                            f"START YOUR RESPONSE WITH '{{' AND END WITH '}}'."
                         )
                 else:
                     # For robust models (GPT-4, etc.), use the standard prompt but still include schema if not present

@@ -22,6 +22,21 @@ class ScriptWriterAgent(BaseAgent):
         - Provide vivid visual descriptions for each panel.
         - Ensure character names and descriptions are consistent throughout.
         - Keep dialogue concise and punchy.
+        
+        Example Output Format:
+        {
+          "title": "The Boy and the Sun",
+          "synopsis": "A story about a desert shepherd...",
+          "scenes": [
+            {
+              "id": 1,
+              "location": "Desert Oasis",
+              "narrative_summary": "Santiago wakes up...",
+              "characters": [{"name": "Santiago", "description": "Young boy", "personality": "Curious"}],
+              "panels": [...]
+            }
+          ]
+        }
         """
         
         user_prompt = f"""
