@@ -74,15 +74,33 @@ class LLMInterface:
             try:
                 logger.info(f"LLM Request (Attempt {attempt + 1}/{max_retries}) using {self.model_name}...")
                 
-                # Augment system prompt for smaller models IF not already detailed
-                if ("ollama" in self.model_name or "gemini" in self.model_name) and "schema" not in system_prompt.lower():
-                    schema_json = json.dumps(schema.model_json_schema(), indent=2)
-                    if attempt > 0:
-                        enhanced_system = f"CRITICAL: You MUST return ONLY a valid JSON object matching this schema: {schema_json}. No prologue, no epilogue, no explanations."
+                # Extract schema as JSON
+                schema_json = json.dumps(schema.model_json_schema(), indent=2)
+                
+                # Check if we should override the system prompt for local models
+                is_local = "ollama" in self.model_name or "local" in self.model_name
+                
+                if is_local:
+                    if attempt == 0:
+                        enhanced_system = (
+                            f"{system_prompt}\n\n"
+                            f"CRITICAL: You MUST return a JSON object that matches this EXACT schema:\n"
+                            f"{schema_json}\n\n"
+                            f"Response MUST be valid JSON only. No conversational filler, no explanations."
+                        )
                     else:
-                        enhanced_system = f"{system_prompt}\n\nYou MUST return a JSON object that matches this EXACT schema:\n{schema_json}"
+                        # Even stricter on retries
+                        enhanced_system = (
+                            f"You failed to provide valid JSON in the previous attempt.\n"
+                            f"YOU MUST RETURN ONLY THE JSON OBJECT. NO TEXT BEFORE OR AFTER.\n"
+                            f"SCHEMA: {schema_json}"
+                        )
                 else:
-                    enhanced_system = system_prompt
+                    # For robust models (GPT-4, etc.), use the standard prompt but still include schema if not present
+                    if "schema" not in system_prompt.lower():
+                        enhanced_system = f"{system_prompt}\n\nSchema: {schema_json}"
+                    else:
+                        enhanced_system = system_prompt
 
                 response = completion(
                     model=self.model_name,
@@ -90,7 +108,7 @@ class LLMInterface:
                         {"role": "system", "content": enhanced_system},
                         {"role": "user", "content": prompt}
                     ],
-                    response_format={"type": "json_object"} if "gpt" in self.model_name else None,
+                    response_format={"type": "json_object"} if "gpt" in self.model_name or "gemini" in self.model_name else None,
                     api_key=self.api_key,
                     timeout=180 # Longer timeout for Colab
                 )

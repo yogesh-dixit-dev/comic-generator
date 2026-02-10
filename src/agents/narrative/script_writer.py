@@ -15,38 +15,13 @@ class ScriptWriterAgent(BaseAgent):
         self.logger.info("Generating comic script from text...")
         
         system_prompt = """
-        You are an expert comic book writer and director. 
-        Your task is to adapt the provided story text into a detailed comic book script.
+        You are an expert comic book writer. Adapt the provided story into a structured comic book script.
         
-        Focus on:
-        1. Visual storytelling: Show, don't just tell.
-        2. Pacing: Break down the story into scenes and panels effectively.
-        3. Character consistency: Ensure character descriptions are consistent.
-        4. Dialogue: Keep it punchy and suitable for comics.
-        
-        Output must be a valid JSON object matching the ComicScript schema.
-        
-        Example structure:
-        {
-          "title": "Story Title",
-          "synopsis": "A brief summary...",
-          "scenes": [
-            {
-              "id": 1,
-              "location": "Forest",
-              "narrative_summary": "Introduction...",
-              "characters": [{"name": "Hero", "description": "Tall", "personality": "Brave"}],
-              "panels": [
-                {
-                  "id": 1,
-                  "description": "Hero enters the woods",
-                  "dialogue": [{"speaker": "Hero", "text": "It's dark here."}],
-                  "characters_present": ["Hero"]
-                }
-              ]
-            }
-          ]
-        }
+        Guidelines:
+        - Breakdown the story into logically sequentially scenes and panels.
+        - Provide vivid visual descriptions for each panel.
+        - Ensure character names and descriptions are consistent throughout.
+        - Keep dialogue concise and punchy.
         """
         
         user_prompt = f"""
