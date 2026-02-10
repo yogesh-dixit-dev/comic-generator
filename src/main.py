@@ -36,8 +36,8 @@ def main():
     parser.add_argument("--hf_repo", type=str, help="Hugging Face Repo ID (if storage=hf)")
     parser.add_argument("--hf_token", type=str, help="Hugging Face Token (optional if env var set)")
     
-    parser.add_argument("--reasoning_model", type=str, default="ollama/llama3.1:8b", help="Model for complex reasoning tasks")
-    parser.add_argument("--fast_model", type=str, default="ollama/llama3.2:3b", help="Model for fast, simple tasks")
+    parser.add_argument("--reasoning_model", type=str, default="ollama/llama3.1", help="Model for complex reasoning tasks")
+    parser.add_argument("--fast_model", type=str, default="ollama/llama3.2", help="Model for fast, simple tasks")
     
     args = parser.parse_args()
 
