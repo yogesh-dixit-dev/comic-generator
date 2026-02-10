@@ -40,68 +40,72 @@ class LLMInterface:
         start_index = start_match.start() if start_match else text.find('{')
         end_index = text.rfind('}')
         
-        if start_index != -1 and end_index != -1 and end_index > start_index:
+        if start_index != -1 and end_index != -1 and end_index >= start_index:
             text = text[start_index:end_index+1].strip()
         
         # 3. Basic JSON Repair (handle trailing commas)
         # Remove trailing commas before closing braces/brackets
         text = re.sub(r',\s*([\]}])', r'\1', text)
         
-        return text
+        # Final safety check: if we somehow got an empty string, return empty object
+        return text or "{}"
 
     def generate_structured_output(self, prompt: str, schema: Type[T], system_prompt: str = "You are a helpful assistant. Respond ONLY with valid JSON.") -> T:
         """
         Generates a response from the LLM that strictly enforces the given Pydantic schema.
+        Includes a retry mechanism for robustness.
         """
-        try:
-            logger.info(f"Sending request to LLM ({self.model_name})...")
-            
-            # Augment system prompt for smaller models IF not already detailed
-            if ("ollama" in self.model_name or "gemini" in self.model_name) and "schema" not in system_prompt.lower():
-                schema_json = json.dumps(schema.model_json_schema(), indent=2)
-                enhanced_system = f"{system_prompt}\n\nYou MUST return a JSON object that matches this EXACT schema:\n{schema_json}"
-            else:
-                enhanced_system = system_prompt
-
-            response = completion(
-                model=self.model_name,
-                messages=[
-                    {"role": "system", "content": enhanced_system},
-                    {"role": "user", "content": prompt}
-                ],
-                # response_format is unreliable mainly for OpenAI. 
-                # For Ollama/Gemini, we rely on strict prompting and our robust _extract_json.
-                response_format={"type": "json_object"} if "gpt" in self.model_name else None,
-                api_key=self.api_key
-            )
-            
-            content = response.choices[0].message.content
-            if not content:
-                logger.error("LLM returned an empty response!")
-                raise ValueError("Empty response from LLM")
-
-            logger.info(f"Raw LLM Response (first 100 chars): {content[:100]}...")
-            
-            # Use robust extractor
-            json_content = self._extract_json(content)
-            
+        max_retries = 3
+        last_error = None
+        
+        for attempt in range(max_retries):
             try:
+                logger.info(f"LLM Request (Attempt {attempt + 1}/{max_retries}) using {self.model_name}...")
+                
+                # Augment system prompt for smaller models IF not already detailed
+                if ("ollama" in self.model_name or "gemini" in self.model_name) and "schema" not in system_prompt.lower():
+                    schema_json = json.dumps(schema.model_json_schema(), indent=2)
+                    # For retries, we might want an even simpler prompt
+                    if attempt > 0:
+                        enhanced_system = f"Respond ONLY with a JSON object matching this schema: {schema_json}. No talk."
+                    else:
+                        enhanced_system = f"{system_prompt}\n\nYou MUST return a JSON object that matches this EXACT schema:\n{schema_json}"
+                else:
+                    enhanced_system = system_prompt
+
+                response = completion(
+                    model=self.model_name,
+                    messages=[
+                        {"role": "system", "content": enhanced_system},
+                        {"role": "user", "content": prompt}
+                    ],
+                    response_format={"type": "json_object"} if "gpt" in self.model_name else None,
+                    api_key=self.api_key,
+                    timeout=120 # Give local models more time
+                )
+                
+                content = response.choices[0].message.content
+                if not content:
+                    raise ValueError("LLM returned an empty response")
+
+                logger.debug(f"Raw Response: {content[:200]}...")
+                
+                # Use robust extractor
+                json_content = self._extract_json(content)
                 data = json.loads(json_content)
-                logger.debug(f"Successfully parsed keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
-            except json.JSONDecodeError as je:
-                logger.error(f"JSON Decode Error: {je}")
-                logger.error(f"Full problematic content: \n{content}")
-                # Try to return a minimal valid structure to see if it allows the process to continue
-                # But for a ScriptWriter, we need real data.
-                raise
+                
+                return schema.model_validate(data)
 
-            return schema.model_validate(data)
-
-        except Exception as e:
-            logger.error(f"LLM generation failed: {str(e)}")
-            if 'content' in locals():
-                 logger.error(f"Full content that failed: {content}")
-            raise
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Attempt {attempt + 1} failed: {str(e)}")
+                if attempt < max_retries - 1:
+                    import time
+                    time.sleep(2 * (attempt + 1)) # Exponential backoff
+                continue
+        
+        logger.error(f"All {max_retries} attempts failed for LLM generation.")
+        raise last_error
 
     def generate_text(self, prompt: str, system_prompt: str = "You are a helpful assistant.") -> str:
         """
