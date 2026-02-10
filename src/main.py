@@ -64,10 +64,10 @@ def main():
 
     # 3. Initialize Agents
     input_reader = InputReaderAgent("InputReader")
-    # Use Google Gemini Pro (FREE tier, universally available)
-    # Set GOOGLE_API_KEY env var (get free key from https://aistudio.google.com/apikey)
-    # Override with LITELLM_MODEL env var for different models
-    model_name = os.environ.get("LITELLM_MODEL", "gemini/gemini-pro")
+    # Use Ollama by default (runs locally, NO API KEYS needed!)
+    # Install Ollama in Colab with: !curl -fsSL https://ollama.com/install.sh | sh
+    # Then run: !ollama serve & and !ollama pull llama3.2
+    model_name = os.environ.get("LITELLM_MODEL", "ollama/llama3.2")
     
     script_writer = ScriptWriterAgent("ScriptWriter", config={"model_name": model_name})
     script_critique = ScriptCritiqueAgent("ScriptCritique", config={"model_name": model_name})

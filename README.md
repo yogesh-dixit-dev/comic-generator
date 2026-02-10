@@ -16,18 +16,26 @@ A modular, agent-based system for converting text (novels, stories, scripts) int
     ```bash
     pip install -r requirements.txt
     ```
-3.  Set up your environment variables (create a `.env` file):
+3.  **Option A: Local Ollama (NO API KEYS - Recommended)**
+    ```bash
+    # Install Ollama (one-time setup)
+    curl -fsSL https://ollama.com/install.sh | sh
+    
+    # Pull the model
+    ollama pull llama3.2
+    
+    # That's it! No environment variables needed.
+    ```
+
+4.  **Option B: Cloud APIs (requires API keys)**
     ```bash
     # Get FREE Gemini API key from: https://aistudio.google.com/apikey
     GOOGLE_API_KEY=your_gemini_key_here
+    LITELLM_MODEL=gemini/gemini-pro
     
-    # Optional: Use OpenAI instead (requires paid credits)
+    # OR use OpenAI (requires paid credits)
     # OPENAI_API_KEY=your_key_here
     # LITELLM_MODEL=gpt-3.5-turbo
-    
-    # Other free/local options:
-    # LITELLM_MODEL=groq/llama-3.1-8b-instant  # Free, very fast (needs GROQ_API_KEY)
-    # LITELLM_MODEL=ollama/llama3              # Local, completely offline
     ```
 
 ## Usage
