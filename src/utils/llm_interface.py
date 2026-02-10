@@ -18,37 +18,49 @@ class LLMInterface:
 
     def _extract_json(self, text: str) -> str:
         """
-        Extracts and cleans JSON content from a string.
-        Handles markdown blocks, conversational preamble, and common LLM mistakes.
+        Ultra-aggressive JSON extraction.
+        Finds the broadest possible {...} or [...] block.
         """
-        if not text or not text.strip():
+        if not text:
             return "{}"
 
-        # Trim whitespace
-        text = text.strip()
-        
-        # 1. Check for markdown code blocks
+        # 1. Try markdown block first
         import re
         json_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
         if json_match:
-            text = json_match.group(1).strip()
+            candidate = json_match.group(1).strip()
+            if candidate: return candidate
             
-        # 2. Find the outermost '{' and '}'
-        import re
-        # Look for first '{' that likely starts a key, or just any '{'
-        start_match = re.search(r'\{\s*"', text)
-        start_index = start_match.start() if start_match else text.find('{')
-        end_index = text.rfind('}')
+        # 2. Find outermost curly braces
+        start_curly = text.find('{')
+        end_curly = text.rfind('}')
         
-        if start_index != -1 and end_index != -1 and end_index >= start_index:
-            text = text[start_index:end_index+1].strip()
+        # 3. Find outermost square brackets (for list results)
+        start_bracket = text.find('[')
+        end_bracket = text.rfind(']')
         
-        # 3. Basic JSON Repair (handle trailing commas)
-        # Remove trailing commas before closing braces/brackets
-        text = re.sub(r',\s*([\]}])', r'\1', text)
+        # Determine which one to use
+        # Case A: Both found
+        if start_curly != -1 and start_bracket != -1:
+            if start_curly < start_bracket:
+                # Starts with {
+                if end_curly > start_curly:
+                    return text[start_curly:end_curly+1].strip()
+            else:
+                # Starts with [
+                if end_bracket > start_bracket:
+                    return text[start_bracket:end_bracket+1].strip()
         
-        # Final safety check: if we somehow got an empty string, return empty object
-        return text or "{}"
+        # Case B: Only one found
+        if start_curly != -1 and end_curly > start_curly:
+            return text[start_curly:end_curly+1].strip()
+        
+        if start_bracket != -1 and end_bracket > start_bracket:
+            return text[start_bracket:end_bracket+1].strip()
+            
+        # 4. Fallback: Clean string and hope for the best
+        cleaned = text.strip()
+        return cleaned if cleaned else "{}"
 
     def generate_structured_output(self, prompt: str, schema: Type[T], system_prompt: str = "You are a helpful assistant. Respond ONLY with valid JSON.") -> T:
         """
@@ -65,9 +77,8 @@ class LLMInterface:
                 # Augment system prompt for smaller models IF not already detailed
                 if ("ollama" in self.model_name or "gemini" in self.model_name) and "schema" not in system_prompt.lower():
                     schema_json = json.dumps(schema.model_json_schema(), indent=2)
-                    # For retries, we might want an even simpler prompt
                     if attempt > 0:
-                        enhanced_system = f"Respond ONLY with a JSON object matching this schema: {schema_json}. No talk."
+                        enhanced_system = f"CRITICAL: You MUST return ONLY a valid JSON object matching this schema: {schema_json}. No prologue, no epilogue, no explanations."
                     else:
                         enhanced_system = f"{system_prompt}\n\nYou MUST return a JSON object that matches this EXACT schema:\n{schema_json}"
                 else:
@@ -81,27 +92,39 @@ class LLMInterface:
                     ],
                     response_format={"type": "json_object"} if "gpt" in self.model_name else None,
                     api_key=self.api_key,
-                    timeout=120 # Give local models more time
+                    timeout=180 # Longer timeout for Colab
                 )
                 
                 content = response.choices[0].message.content
-                if not content:
+                if not content or not content.strip():
+                    logger.warning(f"Attempt {attempt + 1}: Empty response content.")
                     raise ValueError("LLM returned an empty response")
 
-                logger.debug(f"Raw Response: {content[:200]}...")
-                
-                # Use robust extractor
+                # Use ultra-aggressive extractor
                 json_content = self._extract_json(content)
-                data = json.loads(json_content)
                 
+                # Safety log
+                logger.debug(f"Parsing JSON candidate (length {len(json_content)}): {json_content[:100]}...")
+                
+                if not json_content:
+                    raise ValueError("Failed to extract any JSON-like content from response")
+
+                # Repair common mistakes
+                import re
+                repaired = re.sub(r',\s*([\]}])', r'\1', json_content) # Trailing commas
+                
+                data = json.loads(repaired)
                 return schema.model_validate(data)
 
             except Exception as e:
                 last_error = e
                 logger.warning(f"Attempt {attempt + 1} failed: {str(e)}")
+                if 'content' in locals() and content:
+                    logger.info(f"Raw problematic output: {content[:500]}...")
+                
                 if attempt < max_retries - 1:
                     import time
-                    time.sleep(2 * (attempt + 1)) # Exponential backoff
+                    time.sleep(3 * (attempt + 1))
                 continue
         
         logger.error(f"All {max_retries} attempts failed for LLM generation.")
