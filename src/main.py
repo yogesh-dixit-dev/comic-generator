@@ -22,6 +22,8 @@ from src.agents.production.image_generators import MockImageGenerator, Diffusers
 from src.agents.assembly.layout_engine import LayoutEngine
 from src.agents.assembly.lettering import LetteringAgent
 from src.core.storage import HuggingFaceStorage, LocalStorage
+from src.core.checkpoint import PipelineState
+from src.utils.checkpoint_manager import CheckpointManager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -112,13 +114,41 @@ def main():
         chunks = input_reader.chunk_text(raw_text, max_words=2000)
         logger.info(f"🧩 Split story into {len(chunks)} chunk(s).")
 
+        # --- Checkpoint System Initialization ---
+        checkpoint_mgr = CheckpointManager(storage)
+        input_hash = checkpoint_mgr.get_input_hash(args.input)
+        state = checkpoint_mgr.load_checkpoint(input_hash)
+        
+        if not state:
+            logger.info("🆕 No existing checkpoint found. Starting fresh.")
+            state = PipelineState(input_hash=input_hash)
+        else:
+            logger.info(f"⏭️ Resuming pipeline from stage: {state.stage}")
+
+        # Step 2: Write Script (Chunked for long stories)
+        from src.utils.script_consolidator import ScriptConsolidator
+        consolidator = ScriptConsolidator()
+        
+        # Restore consolidator state if master_script exists
+        if state.master_script:
+            consolidator.master_script = state.master_script
+            consolidator.total_scenes = len(state.master_script.scenes)
+            logger.info(f"📜 Restored master script with {consolidator.total_scenes} scenes.")
+
         for i, chunk_text in enumerate(chunks):
+            if i <= state.last_chunk_index:
+                logger.info(f"⏭️ Skipping already processed Chunk {i+1}/{len(chunks)}.")
+                continue
+
             logger.info(f"✍️ Processing Chunk {i+1}/{len(chunks)}...")
             try:
-                # We skip schema validation on run if it's too restrictive for multi-chunk
-                # But here ComicScript matches.
                 chunk_script = script_writer.run(chunk_text, expected_schema=ComicScript)
                 consolidator.add_chunk(chunk_script)
+                
+                # Update State & Save Checkpoint
+                state.last_chunk_index = i
+                state.master_script = consolidator.get_script()
+                checkpoint_mgr.save_checkpoint(state)
             except Exception as e:
                 logger.error(f"❌ Failed to process chunk {i+1}: {e}")
                 if i == 0: raise 
@@ -137,16 +167,30 @@ def main():
             logger.warning(f"Script Critique Failed: {critique.feedback}")
         
         # Step 4: Character Design
-        characters = character_designer.run(script) 
-        logger.info(f"👤 Designed {len(characters)} characters.")
-        
-        char_critique = character_critique.run(characters)
-        if not char_critique.passed:
-             logger.warning(f"Character Critique Failed: {char_critique.feedback}")
+        if state.characters:
+            characters = state.characters
+            logger.info(f"⏭️ Skipping character design (Restored {len(characters)} characters).")
+        else:
+            characters = character_designer.run(script) 
+            logger.info(f"👤 Designed {len(characters)} characters.")
+            
+            char_critique = character_critique.run(characters)
+            if not char_critique.passed:
+                logger.warning(f"Character Critique Failed: {char_critique.feedback}")
+            
+            # Save Checkpoint
+            state.characters = characters
+            checkpoint_mgr.save_checkpoint(state)
 
         # Step 5: Visual Production (Scene by Scene)
         finished_pages = []
         for scene in script.scenes:
+            if scene.id <= state.last_scene_id:
+                logger.info(f"⏭️ Skipping already produced Scene {scene.id}.")
+                # (Optional: Load previously rendered images if needed for layout engine later)
+                # For now, we assume the layout engine re-assembles or we need to persist finished_pages too
+                continue
+
             logger.info(f"🎬 Producing Scene {scene.id}: {scene.location}")
             
             # Director plans the shots
@@ -164,6 +208,10 @@ def main():
             for page in scene_pages:
                 final_page = lettering_agent.run(page)
                 finished_pages.append(final_page)
+            
+            # Save Checkpoint after each scene
+            state.last_scene_id = scene.id
+            checkpoint_mgr.save_checkpoint(state)
         
         # Step 7: Storage
         output_paths = storage.save_comic(script, finished_pages, args.output)
