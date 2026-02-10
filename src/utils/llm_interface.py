@@ -82,6 +82,33 @@ class LLMInterface:
         schema_skeleton = resilience.generate_deep_skeleton(schema)
         is_local = "ollama" in self.model_name or "local" in self.model_name
         
+    def is_healthy(self) -> bool:
+        """
+        Checks if the LLM backend is reachable.
+        Specifically useful for Ollama.
+        """
+        if "ollama" in self.model_name or "local" in self.model_name:
+            import requests
+            try:
+                # Standard Ollama health endpoint
+                resp = requests.get("http://localhost:11434/api/tags", timeout=5)
+                return resp.status_code == 200
+            except Exception:
+                return False
+        return True # Assume cloud models are healthy if API keys are present
+
+    def generate_structured_output(self, prompt: str, schema: Type[T], system_prompt: str = "You are a helpful assistant. Respond ONLY with valid JSON.") -> T:
+        """
+        Generates a response from the LLM with optimized latency and resilience.
+        """
+        max_retries = 3
+        last_error = None
+        
+        # Pre-cache schema skeleton
+        resilience = LLMInterface._resilience_agent
+        schema_skeleton = resilience.generate_deep_skeleton(schema)
+        is_local = "ollama" in self.model_name or "local" in self.model_name
+        
         for attempt in range(max_retries):
             # Use semaphore for local models to prevent resource contention
             with LLMInterface._ollama_semaphore if is_local else threading.Lock():
@@ -114,10 +141,9 @@ class LLMInterface:
                             {"role": "user", "content": prompt}
                         ],
                         "api_key": self.api_key,
-                        "timeout": 600 # Increased from 180 to 600 for high-complexity chunks
+                        "timeout": 600
                     }
                     
-                    # Add Ollama-specific memory persistence
                     if is_local:
                         completion_kwargs["keep_alive"] = "20m"
                         
@@ -140,9 +166,15 @@ class LLMInterface:
                     last_error = e
                     logger.warning(f"Attempt {attempt + 1} failed: {str(e)}")
                     
+                    # 💡 Specific logic for connection errors (service might be restarting)
+                    is_conn_error = "Connection refused" in str(e) or "APIConnectionError" in str(e)
+                    
                     if attempt < max_retries - 1:
-                        # Reduced sleep for local models to minimize perceived latency
-                        sleep_time = 1 if is_local else 3 * (attempt + 1)
+                        # Longer sleep for connection errors
+                        sleep_time = 1 if is_local and not is_conn_error else 5
+                        if is_conn_error:
+                             logger.info("⏳ Connection refused. Service might be down or restarting. Waiting 5s...")
+                        
                         import time
                         time.sleep(sleep_time)
                     continue
