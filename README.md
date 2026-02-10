@@ -48,3 +48,4 @@ The system uses a pipeline of specialized agents:
 - `src/agents`: Specialized agent implementations.
 - `src/utils`: Helper functions (LLM interface, etc.).
 - `output`: Generated scripts and images.
+
