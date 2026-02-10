@@ -26,6 +26,9 @@ class JSONResilienceAgent:
             "char_name": "name",
             "visual_description": "description",
             "panel_description": "description",
+            "image": "description",
+            "image_description": "description",
+            "appearance": "description",
             "narrative": "narrative_summary",
             "text": "narrative_summary",
             "summary": "narrative_summary",
@@ -218,8 +221,7 @@ class JSONResilienceAgent:
                 # Better yet: the parent list processor should handle this.
                 pass
 
-            # 2. Scene-Specific Fallbacks (The Alchemist Problem)
-            # If location is missing, try to steal from title or setting
+            # 2. Scene-Specific Fallbacks
             if "location" in target_fields and not new_data.get("location"):
                 for fallback in ["setting", "title", "description", "scene"]:
                     if current_data.get(fallback) and len(str(current_data.get(fallback))) < 100:
@@ -228,12 +230,27 @@ class JSONResilienceAgent:
                 if not new_data.get("location"):
                     new_data["location"] = "Unknown Location"
 
-            # If narrative_summary is missing, try scene or description
             if "narrative_summary" in target_fields and not new_data.get("narrative_summary"):
                 for fallback in ["scene", "description", "text", "summary"]:
                     if current_data.get(fallback):
                         new_data["narrative_summary"] = str(current_data.get(fallback))
                         break
+
+            # 3. Personality Fallbacks
+            if "personality" in target_fields and not new_data.get("personality"):
+                # If we have description but no personality, or if personality is just missing
+                new_data["personality"] = "Determined Character"
+
+            # 4. Style Guide Dict-to-String
+            if "style_guide" in target_fields and isinstance(current_data.get("style_guide"), dict):
+                style_dict = current_data.get("style_guide")
+                style_str = "; ".join([f"{k}: {v}" for k, v in style_dict.items()])
+                new_data["style_guide"] = style_str
+
+            # 5. Critique Result Dict-to-Bool
+            if "passed" in target_fields and isinstance(current_data.get("passed"), dict):
+                # If passed is a dict like {"visuals": True, ...}, we take the min
+                new_data["passed"] = all(current_data.get("passed").values())
 
             return new_data
 

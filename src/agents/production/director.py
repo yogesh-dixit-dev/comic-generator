@@ -8,11 +8,18 @@ class DirectorAgent(BaseAgent):
         super().__init__(agent_name, config)
         self.llm = LLMInterface(model_name=config.get("model_name", "gpt-4o"))
 
-    def process(self, script: ComicScript) -> ComicScript:
+    def process(self, scene: Any) -> Any:
         """
-        Enhances the script with detailed camera and lighting directions for each panel.
+        Enhances a single scene with detailed camera and lighting directions for each panel.
         """
-        self.logger.info("Adding directorial guidance to panels...")
+        from src.core.models import Scene, Panel
+        
+        # Ensure we are working with a Scene object
+        if not isinstance(scene, Scene):
+            self.logger.warning(f"Director received {type(scene)}, expected Scene. Attempting to skip.")
+            return scene
+
+        self.logger.info(f"Adding directorial guidance to Scene {scene.id}...")
         
         system_prompt = """
         You are a visionary film director and cinematographer.
@@ -23,47 +30,41 @@ class DirectorAgent(BaseAgent):
         2. Shot Type: (e.g., Close-up, Medium shot, Long shot).
         3. Lighting: (e.g., Dramatic shadows, Soft natural light, Neon backlight).
         
-        Update the panel descriptions to include these details naturally.
+        Return the updated list of panels with enriched descriptions.
         """
         
-        # We process scene by scene to maintain context
-        for scene in script.scenes:
-            scene_context = f"Scene: {scene.location}. Summary: {scene.narrative_summary}"
-            panels_context = "\n".join([f"Panel {p.id}: {p.description}" for p in scene.panels])
-            
-            user_prompt = f"""
-            Enhance the following scene with cinematic direction:
-            {scene_context}
-            
-            Panels:
-            {panels_context}
-            
-            Return the updated list of panels with enriched descriptions.
-            """
-            
-            try:
-                # We expect a list of Panels back
-                from pydantic import BaseModel
-                class PanelList(BaseModel):
-                    panels: List[Panel]
+        scene_context = f"Scene: {scene.location}. Summary: {scene.narrative_summary}"
+        panels_context = "\n".join([f"Panel {p.id}: {p.description}" for p in scene.panels])
+        
+        user_prompt = f"""
+        Enhance the following scene with cinematic direction:
+        {scene_context}
+        
+        Panels:
+        {panels_context}
+        
+        Return the updated list of panels.
+        """
+        
+        try:
+            from pydantic import BaseModel
+            class PanelList(BaseModel):
+                panels: List[Panel]
 
-                enhanced_panels = self.llm.generate_structured_output(
-                   prompt=user_prompt,
-                   system_prompt=system_prompt,
-                   schema=PanelList
-                )
-                
-                # Replace the old panels with the new ones
-                # Note: This assumes the LLM returns the same number of panels in order.
-                # Production code would need robust matching logic.
-                if len(enhanced_panels.panels) == len(scene.panels):
-                    scene.panels = enhanced_panels.panels
-                else:
-                    self.logger.warning(f"Director returned {len(enhanced_panels.panels)} panels, expected {len(scene.panels)}. Skipping update for scene {scene.id}.")
+            enhanced_output = self.llm.generate_structured_output(
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+                schema=PanelList
+            )
             
-            except Exception as e:
-                 self.logger.error(f"Director failed for scene {scene.id}: {e}")
-                 # Continue to next scene rather than crashing entire script
-                 continue
-                 
-        return script
+            # Replace the old panels with the new ones
+            if len(enhanced_output.panels) == len(scene.panels):
+                scene.panels = enhanced_output.panels
+                self.logger.info(f"Successfully enhanced {len(scene.panels)} panels for Scene {scene.id}")
+            else:
+                self.logger.warning(f"Director returned {len(enhanced_output.panels)} panels, expected {len(scene.panels)}. Keeping originals.")
+        
+        except Exception as e:
+            self.logger.error(f"Director failed for scene {scene.id}: {e}")
+            
+        return scene
