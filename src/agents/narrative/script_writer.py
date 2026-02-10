@@ -14,6 +14,16 @@ class ScriptWriterAgent(BaseAgent):
         """
         self.logger.info("Generating comic script from text...")
         
+        system_prompt = """
+        You are an expert comic book writer and director. 
+        Your task is to adapt the provided story text into a detailed comic book script.
+        
+        Focus on:
+        1. Visual storytelling: Show, don't just tell.
+        2. Pacing: Break down the story into scenes and panels effectively.
+        3. Character consistency: Ensure character descriptions are consistent.
+        4. Dialogue: Keep it punchy and suitable for comics.
+        
         Output must be a valid JSON object matching the ComicScript schema.
         
         Example structure:
