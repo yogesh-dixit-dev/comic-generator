@@ -49,10 +49,10 @@ class LLMInterface:
         try:
             logger.info(f"Sending request to LLM ({self.model_name})...")
             
-            # Augment system prompt for smaller models
-            if "ollama" in self.model_name or "gemini" in self.model_name:
+            # Augment system prompt for smaller models IF not already detailed
+            if ("ollama" in self.model_name or "gemini" in self.model_name) and "schema" not in system_prompt.lower():
                 schema_json = json.dumps(schema.model_json_schema(), indent=2)
-                enhanced_system = f"{system_prompt}\nYou MUST return a JSON object that matches this schema:\n{schema_json}\nReturn ONLY the JSON. No explanations."
+                enhanced_system = f"{system_prompt}\n\nStrictly follow this JSON schema:\n{schema_json}"
             else:
                 enhanced_system = system_prompt
 
@@ -62,8 +62,9 @@ class LLMInterface:
                     {"role": "system", "content": enhanced_system},
                     {"role": "user", "content": prompt}
                 ],
-                # LiteLLM supports response_format for some providers
-                response_format={"type": "json_object"} if any(x in self.model_name for x in ["gpt", "ollama", "gemini"]) else None,
+                # response_format is reliable mainly for OpenAI/Grok. 
+                # For Ollama/Gemini, we rely on strict prompting and our robust _extract_json.
+                response_format={"type": "json_object"} if "gpt" in self.model_name else None,
                 api_key=self.api_key
             )
             
