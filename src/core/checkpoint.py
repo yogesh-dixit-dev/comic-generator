@@ -12,6 +12,7 @@ class PipelineState(BaseModel):
     master_script: Optional[ComicScript] = Field(None, description="The accumulated comic script")
     characters: List[Character] = Field(default_factory=list, description="List of designed characters")
     last_scene_id: int = Field(-1, description="ID of the last scene successfully produced")
+    finished_pages: List[str] = Field(default_factory=list, description="List of generated page file paths")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata (timestamps, model names, etc.)")
     
     @property

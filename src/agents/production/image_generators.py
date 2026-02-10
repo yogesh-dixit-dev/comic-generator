@@ -1,6 +1,6 @@
 import os
 import logging
-from typing import Optional
+from typing import Optional, List
 from src.core.image_interface import ImageGeneratorInterface
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,9 @@ class MockImageGenerator(ImageGeneratorInterface):
         
         return filepath
 
+    def generate_batch(self, prompts: List[str], **kwargs) -> List[str]:
+        return [self.generate(p, **kwargs) for p in prompts]
+
 class DiffusersImageGenerator(ImageGeneratorInterface):
     """
     Real generator using Hugging Face Diffusers (Stable Diffusion XL / Flux).
@@ -63,7 +66,16 @@ class DiffusersImageGenerator(ImageGeneratorInterface):
             self.pipe.to(device)
             # Enable memory optimizations for Colab T4
             self.pipe.enable_model_cpu_offload() 
-            logger.info("Model loaded successfully.")
+            
+            # Speed Optimization: Use faster scheduler for Turbo/Lightning if detected
+            if "turbo" in model_id.lower() or "lightning" in model_id.lower():
+                 from diffusers import EulerDiscreteScheduler
+                 self.pipe.scheduler = EulerDiscreteScheduler.from_config(self.pipe.scheduler.config, timestep_spacing="trailing")
+                 self.inference_steps = 4 # Turbo needs very few steps
+            else:
+                 self.inference_steps = 25 # Standard high quality
+                 
+            logger.info(f"Model loaded successfully. Using {self.inference_steps} steps.")
         except Exception as e:
             logger.error(f"Failed to load Diffusers model: {e}")
             raise
@@ -82,7 +94,8 @@ class DiffusersImageGenerator(ImageGeneratorInterface):
                 width=width,
                 height=height,
                 generator=generator,
-                num_inference_steps=30 # Good balance for speed/quality
+                num_inference_steps=self.inference_steps,
+                guidance_scale=0.0 if self.inference_steps < 10 else 7.5 # Lower guidance for Turbo/Lightning
             ).images[0]
             
             output_dir = "output"
@@ -96,8 +109,51 @@ class DiffusersImageGenerator(ImageGeneratorInterface):
             filepath = os.path.join(output_dir, filename)
             
             image.save(filepath)
+            
+            # Memory Safety: Clear cache after each generation
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                
             return filepath
             
         except Exception as e:
             logger.error(f"Diffusers generation failed: {e}")
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             raise
+
+    def generate_batch(self, prompts: List[str], negative_prompt: str = "", **kwargs) -> List[str]:
+        """
+        Generates multiple images in a single call to maximize throughput.
+        """
+        logger.info(f"Batch generating {len(prompts)} images...")
+        try:
+            images = self.pipe(
+                prompt=prompts,
+                negative_prompt=[negative_prompt] * len(prompts),
+                num_inference_steps=self.inference_steps,
+                guidance_scale=0.0 if self.inference_steps < 10 else 7.5,
+                **kwargs
+            ).images
+            
+            paths = []
+            output_dir = "output"
+            import hashlib
+            import time
+            
+            for i, image in enumerate(images):
+                hash_object = hashlib.md5(prompts[i].encode())
+                filename = f"gen_batch_{i}_{hash_object.hexdigest()[:8]}_{int(time.time())}.png"
+                filepath = os.path.join(output_dir, filename)
+                image.save(filepath)
+                paths.append(filepath)
+            
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                
+            return paths
+        except Exception as e:
+            logger.error(f"Batch generation failed: {e}")
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            return [self.generate(p, negative_prompt=negative_prompt, **kwargs) for p in prompts]

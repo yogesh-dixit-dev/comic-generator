@@ -2,6 +2,8 @@ import os
 import json
 import hashlib
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Any, Dict
 from pydantic import ValidationError
 from src.core.checkpoint import PipelineState
@@ -16,6 +18,8 @@ class CheckpointManager:
     def __init__(self, storage: StorageInterface, checkpoint_dir: str = ".checkpoints"):
         self.storage = storage
         self.checkpoint_dir = checkpoint_dir
+        self._executor = ThreadPoolExecutor(max_workers=2) # Background sync/progress tasks
+        
         if isinstance(storage, LocalStorage):
             if not os.path.exists(checkpoint_dir):
                 os.makedirs(checkpoint_dir)
@@ -45,22 +49,91 @@ class CheckpointManager:
         
         logger.info(f"💾 Checkpoint saved locally to {path}")
 
-        # 2. Cloud Sync
+        # 2. Background Cloud Sync & Progress Update
+        if isinstance(self.storage, HuggingFaceStorage):
+            # Normalization and sync logic offloaded to background
+            self._executor.submit(self._background_sync, path, state)
+        else:
+            # Local/GitHub sync can also be backgrounded
+            self._executor.submit(self._background_git_push, path, state.input_hash)
+
+    def _background_sync(self, path: str, state: PipelineState):
+        """Internal method for background HF sync."""
         try:
-            if isinstance(self.storage, HuggingFaceStorage):
-                self.storage.save_file(path, path)
-                logger.info("☁️ Checkpoint synced to Hugging Face.")
-            else:
-                # If local, we rely on the user running git push or a GitAutomationAgent call
-                # In Colab/dev mode, we might want to trigger a git commit for the checkpoint specifically
-                from src.agents.infrastructure.git_automation import GitAutomationAgent
-                git = GitAutomationAgent("CheckpointGit")
-                git.run_command(f"git add {path}")
-                git.run_command(f'git commit -m "docs: save checkpoint for {state.input_hash[:12]}"')
-                git.run_command("git push")
-                logger.info("☁️ Checkpoint pushed to GitHub.")
+            remote_path = path.replace("\\", "/")
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    self.storage.save_file(path, remote_path)
+                    logger.info(f"☁️ Background checkpoint sync complete (Attempt {attempt+1}).")
+                    break
+                except Exception as hf_err:
+                    if attempt == max_retries - 1:
+                        raise hf_err
+                    logger.warning(f"HF background upload attempt {attempt+1} failed: {hf_err}. Retrying...")
+            
+            self.update_live_progress(state)
         except Exception as e:
-            logger.warning(f"⚠️ Cloud sync for checkpoint failed: {e}. Progress is still saved locally.")
+            logger.warning(f"⚠️ Background HF sync failed: {e}")
+
+    def _background_git_push(self, path: str, input_hash: str):
+        """Internal method for background Git sync."""
+        try:
+            from src.agents.infrastructure.git_automation import GitAutomationAgent
+            git = GitAutomationAgent("CheckpointGit")
+            
+            # Ensure git identity is set (crucial for Colab/CI)
+            self._ensure_git_config(git)
+            
+            git.run_command(f"git add {path}")
+            git.run_command(f'git commit -m "docs: save checkpoint for {input_hash[:12]}"')
+            git.run_command("git push")
+            logger.info("☁️ Background git sync complete.")
+        except Exception as e:
+            logger.debug(f"Git background sync skipped or failed: {e}")
+
+    def _ensure_git_config(self, git_agent):
+        """Sets a dummy git identity if none exists."""
+        try:
+            # Check if user.email is set
+            check = git_agent.run_command("git config user.email")
+            if not check or "root@" in check or "(none)" in check:
+                logger.info("🔧 Setting dummy Git identity for checkpoint sync...")
+                git_agent.run_command('git config --global user.email "comic-gen-bot@example.com"')
+                git_agent.run_command('git config --global user.name "ComicGen Bot"')
+        except Exception:
+            # Fallback for systems where git config fails
+            pass
+
+    def shutdown(self, wait: bool = True):
+        """Shuts down the background executor."""
+        self._executor.shutdown(wait=wait)
+        logger.info("⚙️ CheckpointManager background executor shut down.")
+
+    def update_live_progress(self, state: PipelineState):
+        """
+        Writes a lightweight progress status to the root of the cloud storage.
+        Allows users to monitor status without downloading heavy checkpoints.
+        """
+        progress_data = {
+            "input_hash": state.input_hash,
+            "stage": state.stage,
+            "last_chunk": state.last_chunk_index,
+            "scenes_completed": state.last_scene_id,
+            "pages_generated": len(state.finished_pages),
+            "timestamp": str(os.path.getmtime(self.get_checkpoint_path(state.input_hash))) if os.path.exists(self.get_checkpoint_path(state.input_hash)) else "N/A"
+        }
+        
+        local_progress_path = os.path.join(self.checkpoint_dir, "progress.json")
+        with open(local_progress_path, "w") as f:
+            json.dump(progress_data, f, indent=2)
+            
+        if isinstance(self.storage, HuggingFaceStorage):
+            try:
+                self.storage.save_file(local_progress_path, "progress.json")
+                logger.info("📊 Live progress updated on Hugging Face.")
+            except Exception as e:
+                logger.warning(f"Failed to update live progress: {e}")
 
     def load_checkpoint(self, input_hash: str) -> Optional[PipelineState]:
         """Loads the checkpoint for a specific input hash, pulling from cloud if needed."""

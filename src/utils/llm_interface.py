@@ -11,10 +11,16 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
 
 class LLMInterface:
+    _resilience_agent = None  # Class-level cache for efficiency
+
     def __init__(self, model_name: str = "gpt-4o", api_key: Optional[str] = None):
         self.model_name = model_name
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY") # Fallback to env var
-        # litellm handles API keys from env vars automatically for many providers
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        
+        # Initialize resilience agent once
+        if LLMInterface._resilience_agent is None:
+            from src.utils.json_resilience import JSONResilienceAgent
+            LLMInterface._resilience_agent = JSONResilienceAgent()
 
     def _extract_json(self, text: str) -> str:
         """
@@ -64,101 +70,81 @@ class LLMInterface:
 
     def generate_structured_output(self, prompt: str, schema: Type[T], system_prompt: str = "You are a helpful assistant. Respond ONLY with valid JSON.") -> T:
         """
-        Generates a response from the LLM that strictly enforces the given Pydantic schema.
-        Includes a retry mechanism for robustness.
+        Generates a response from the LLM with optimized latency and resilience.
         """
         max_retries = 3
         last_error = None
+        
+        # Pre-cache schema skeleton
+        resilience = LLMInterface._resilience_agent
+        schema_skeleton = resilience.generate_deep_skeleton(schema)
         
         for attempt in range(max_retries):
             try:
                 logger.info(f"LLM Request (Attempt {attempt + 1}/{max_retries}) using {self.model_name}...")
                 
-                # Extract schema as JSON
-                schema_json = json.dumps(schema.model_json_schema(), indent=2)
-                
-                # Check if we should override the system prompt for local models
                 is_local = "ollama" in self.model_name or "local" in self.model_name
                 
                 if is_local:
-                    from src.utils.json_resilience import JSONResilienceAgent
-                    resilience_agent = JSONResilienceAgent()
-                    
-                    # Generate a deep skeleton template
-                    schema_desc = resilience_agent.generate_deep_skeleton(schema)
-
                     if attempt == 0:
                         enhanced_system = (
                             f"{system_prompt}\n\n"
-                            f"IMPORTANT: You MUST return ONLY a valid JSON object. No conversation, no preamble.\n"
-                            f"CRITICAL: Your output MUST follow this exact nested structure:\n"
-                            f"{schema_desc}\n\n"
-                            f"Focus on content generation. Ensure all nested lists (scenes, panels, characters) are populated."
+                            f"IMPORTANT: Respond ONLY with valid JSON.\n"
+                            f"CRITICAL: Follow this exact structure:\n"
+                            f"{schema_skeleton}\n"
                         )
                     else:
-                        # Even stricter on retries
                         enhanced_system = (
-                            f"Your previous output had validation errors. You likely hallucinated field names.\n"
-                            f"YOU MUST RETURN ONLY THE DATA matching this EXACT structure:\n"
-                            f"{schema_desc}\n\n"
-                            f"START YOUR RESPONSE WITH '{{' AND END WITH '}}'."
+                            f"Previous response failed validation. Hallucinated fields detected.\n"
+                            f"YOU MUST MATCH THIS EXACT STRUCTURE:\n"
+                            f"{schema_skeleton}\n"
+                            f"Respond ONLY with the JSON object."
                         )
                 else:
-                    # For robust models (GPT-4, etc.), use the standard prompt but still include schema if not present
-                    if "schema" not in system_prompt.lower():
-                        enhanced_system = f"{system_prompt}\n\nSchema: {schema_json}"
-                    else:
-                        enhanced_system = system_prompt
+                    enhanced_system = f"{system_prompt}\n\nSchema: {json.dumps(schema.model_json_schema(), indent=2)}"
 
-                response = completion(
-                    model=self.model_name,
-                    messages=[
+                # LiteLLM/Ollama Optimizations
+                completion_kwargs = {
+                    "model": self.model_name,
+                    "messages": [
                         {"role": "system", "content": enhanced_system},
                         {"role": "user", "content": prompt}
                     ],
-                    response_format={"type": "json_object"} if "gpt" in self.model_name or "gemini" in self.model_name else None,
-                    api_key=self.api_key,
-                    timeout=180 # Longer timeout for Colab
-                )
+                    "api_key": self.api_key,
+                    "timeout": 180
+                }
+                
+                # Add Ollama-specific memory persistence
+                if is_local:
+                    completion_kwargs["extra_headers"] = {"keep_alive": "20m"} # Keep model in VRAM for 20 mins
+                    # Note: Depending on litellm version, may need to pass as part of model_kwargs
+                    
+                response = completion(**completion_kwargs)
                 
                 content = response.choices[0].message.content
                 if not content or not content.strip():
-                    logger.warning(f"Attempt {attempt + 1}: Empty response content.")
-                    raise ValueError("LLM returned an empty response")
+                    raise ValueError("Empty response")
 
-                # Use ultra-aggressive extractor
                 json_content = self._extract_json(content)
                 
-                if not json_content:
-                    raise ValueError("Failed to extract any JSON-like content from response")
-
-                # Use Resilience Agent for repair if local
                 if is_local:
-                    try:
-                        data = resilience_agent.repair_json(json_content, schema)
-                    except Exception as e:
-                        logger.warning(f"Resilience repair failed: {e}. Falling back to standard parse.")
-                        data = json.loads(json_content)
+                    data = resilience.repair_json(json_content, schema)
                 else:
-                    # Standard repair for cloud models
-                    import re
-                    repaired = re.sub(r',\s*([\]}])', r'\1', json_content)
-                    data = json.loads(repaired)
+                    data = json.loads(json_content)
 
                 return schema.model_validate(data)
 
             except Exception as e:
                 last_error = e
                 logger.warning(f"Attempt {attempt + 1} failed: {str(e)}")
-                if 'content' in locals() and content:
-                    logger.info(f"Raw problematic output: {content[:500]}...")
                 
                 if attempt < max_retries - 1:
+                    # Reduced sleep for local models to minimize perceived latency
+                    sleep_time = 1 if is_local else 3 * (attempt + 1)
                     import time
-                    time.sleep(3 * (attempt + 1))
+                    time.sleep(sleep_time)
                 continue
         
-        logger.error(f"All {max_retries} attempts failed for LLM generation.")
         raise last_error
 
     def generate_text(self, prompt: str, system_prompt: str = "You are a helpful assistant.") -> str:

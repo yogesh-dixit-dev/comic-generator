@@ -2,7 +2,7 @@ import os
 import shutil
 import zipfile
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, Any, List
 import logging
 
 try:
@@ -22,6 +22,13 @@ class StorageInterface(ABC):
     def sync(self, source_dir: str, target_dir: str):
         pass
 
+    @abstractmethod
+    def save_comic(self, script: Any, finished_pages: List[str], output_dir: str) -> List[str]:
+        """
+        Saves the final comic assets and returns a list of output file paths.
+        """
+        pass
+
 class LocalStorage(StorageInterface):
     """
     Simple local storage. Remote path is just another local path.
@@ -38,6 +45,27 @@ class LocalStorage(StorageInterface):
             shutil.copytree(source_dir, target_dir)
         else:
             shutil.copytree(source_dir, target_dir, dirs_exist_ok=True)
+            
+    def save_comic(self, script: Any, finished_pages: List[str], output_dir: str) -> List[str]:
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+            
+        output_paths = []
+        # Save script as JSON for metadata
+        script_path = os.path.join(output_dir, "comic_metadata.json")
+        with open(script_path, "w", encoding="utf-8") as f:
+            f.write(script.model_dump_json(indent=2))
+        output_paths.append(script_path)
+        
+        # Save pages
+        for i, page_path in enumerate(finished_pages):
+            if page_path and os.path.exists(page_path):
+                ext = os.path.splitext(page_path)[1]
+                target_path = os.path.join(output_dir, f"page_{i+1}{ext}")
+                shutil.copy2(page_path, target_path)
+                output_paths.append(target_path)
+                
+        return output_paths
             
     def zip_output(self, source_dir: str, zip_name: str = "comic_output.zip") -> str:
         """
@@ -90,7 +118,23 @@ class HuggingFaceStorage(StorageInterface):
         logger.info(f"Uploading {source_dir} to Hugging Face {self.repo_id}...")
         self.api.upload_folder(
             folder_path=source_dir,
-            path_in_repo=target_dir,
+            path_in_repo=self._normalize_path(target_dir),
             repo_id=self.repo_id,
             repo_type=self.repo_type
         )
+
+    def save_comic(self, script: Any, finished_pages: List[str], output_dir: str) -> List[str]:
+        """
+        Saves comic locally first, then syncs to HF.
+        """
+        local_storage = LocalStorage()
+        output_paths = local_storage.save_comic(script, finished_pages, output_dir)
+        
+        # Sync the entire folder to HF
+        self.sync(output_dir, "comic_output")
+        
+        return [f"hf://{self.repo_id}/comic_output/{os.path.basename(p)}" for p in output_paths]
+
+    def _normalize_path(self, path: str) -> str:
+        """Converts Windows paths to HF-compatible forward slash paths."""
+        return path.replace("\\", "/")

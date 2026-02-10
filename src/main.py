@@ -2,6 +2,7 @@ import os
 import sys
 import argparse
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 # Fix imports for Colab and different working directories
 # Add project root to Python path
@@ -129,20 +130,27 @@ def main():
         from src.utils.script_consolidator import ScriptConsolidator
         consolidator = ScriptConsolidator()
         
-        # Restore consolidator state if master_script exists
         if state.master_script:
             consolidator.master_script = state.master_script
             consolidator.total_scenes = len(state.master_script.scenes)
             logger.info(f"📜 Restored master script with {consolidator.total_scenes} scenes.")
 
-        for i, chunk_text in enumerate(chunks):
-            if i <= state.last_chunk_index:
-                logger.info(f"⏭️ Skipping already processed Chunk {i+1}/{len(chunks)}.")
-                continue
+        # Parallel Script Generation
+        chunk_tasks = []
+        with ThreadPoolExecutor(max_workers=min(4, len(chunks))) as executor:
+            for i, chunk_text in enumerate(chunks):
+                if i <= state.last_chunk_index:
+                    logger.info(f"⏭️ Skipping already processed Chunk {i+1}/{len(chunks)}.")
+                    continue
+                
+                logger.info(f"✍️ Scheduling Chunk {i+1}/{len(chunks)} for parallel processing...")
+                task = executor.submit(script_writer.run, chunk_text, expected_schema=ComicScript)
+                chunk_tasks.append((i, task))
 
-            logger.info(f"✍️ Processing Chunk {i+1}/{len(chunks)}...")
+        # Gather results and maintain order
+        for i, task in chunk_tasks:
             try:
-                chunk_script = script_writer.run(chunk_text, expected_schema=ComicScript)
+                chunk_script = task.result()
                 consolidator.add_chunk(chunk_script)
                 
                 # Update State & Save Checkpoint
@@ -150,9 +158,8 @@ def main():
                 state.master_script = consolidator.get_script()
                 checkpoint_mgr.save_checkpoint(state)
             except Exception as e:
-                logger.error(f"❌ Failed to process chunk {i+1}: {e}")
+                logger.error(f"❌ Failed to process parallel chunk {i+1}: {e}")
                 if i == 0: raise 
-                continue
 
         script = consolidator.get_script()
         if not script:
@@ -196,25 +203,33 @@ def main():
             # Director plans the shots
             scene_plan = director.run(scene)
             
-            # Illustrator generates images
-            for panel in scene_plan.panels:
-                logger.info(f"🎨 Illustrating Panel {panel.id}...")
-                illustrator.run(panel, characters=characters)
+            # Illustrator generates images (Batch Optimized)
+            illustrator.run_batch(scene_plan.panels, characters=characters, style_guide=script.style_guide)
             
             # Step 6: Layout & Lettering (Per Scene for now, or Per Page)
             logger.info(f"📐 Assembling Scene {scene.id}...")
-            scene_pages = layout_engine.run(scene.panels)
+            # Note: layout_engine takes a list of panels and returns panels with layout metadata
+            scene_panels = layout_engine.run(scene_plan.panels)
             
-            for page in scene_pages:
-                final_page = lettering_agent.run(page)
-                finished_pages.append(final_page)
+            # Lettering adds text to the images (Parallelized for speed)
+            lettering_tasks = []
+            with ThreadPoolExecutor(max_workers=min(4, len(scene_panels))) as executor:
+                for panel in scene_panels:
+                    task = executor.submit(lettering_agent.run, panel)
+                    lettering_tasks.append(task)
             
-            # Save Checkpoint after each scene
+            for task in lettering_tasks:
+                final_image_path = task.result()
+                if final_image_path:
+                    state.finished_pages.append(final_image_path)
+            
+            # Save Checkpoint after each scene (Thread pool manages this in background)
             state.last_scene_id = scene.id
             checkpoint_mgr.save_checkpoint(state)
         
-        # Step 7: Storage
-        output_paths = storage.save_comic(script, finished_pages, args.output)
+        # Step 7: Final Comic Packaging
+        logger.info("📦 Packaging final comic...")
+        output_paths = storage.save_comic(script, state.finished_pages, args.output)
         logger.info(f"🚀 Comic Generation Complete! Output saved to {args.output}")
         for p in output_paths:
             logger.info(f"  - {p}")
@@ -223,6 +238,10 @@ def main():
         if args.storage == "hf":
             storage.sync(source_dir=args.output, target_dir="comic_output")
             logger.info("Synced output to Hugging Face Hub successfully.")
+
+        # Ensure all background tasks complete
+        logger.info("⏳ Finalizing background tasks...")
+        checkpoint_mgr.shutdown()
 
     except Exception as e:
         logger.error(f"Pipeline failed: {e}")

@@ -1,4 +1,4 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from src.core.agent import BaseAgent
 from src.core.models import Character, Panel
 
@@ -8,14 +8,16 @@ class ConsistencyManager(BaseAgent):
         self.style_preset = self.config.get("style_preset", "cinematic, detailed, comic book style")
         self.negative_prompt = self.config.get("negative_prompt", "blurry, low quality, distortion, bad anatomy")
 
-    def process(self, panel: Panel, characters: List[Character]) -> str:
+    def process(self, panel: Panel, characters: List[Character], style_guide: Optional[str] = None) -> str:
         """
         Constructs the final image generation prompt for a panel, enforcing character consistency.
         """
         self.logger.info(f"Generating consistent prompt for Panel {panel.id}...")
         
         # Base prompt from panel description
-        prompt_parts = [self.style_preset, panel.description]
+        # Priority: Style Guide from Script > Style Preset from Config
+        style = style_guide or self.style_preset
+        prompt_parts = [style, panel.description]
         
         # Add character details if present in the panel
         if panel.characters_present:
