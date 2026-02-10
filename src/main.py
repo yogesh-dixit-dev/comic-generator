@@ -36,6 +36,9 @@ def main():
     parser.add_argument("--hf_repo", type=str, help="Hugging Face Repo ID (if storage=hf)")
     parser.add_argument("--hf_token", type=str, help="Hugging Face Token (optional if env var set)")
     
+    parser.add_argument("--reasoning_model", type=str, default="ollama/llama3.1:8b", help="Model for complex reasoning tasks")
+    parser.add_argument("--fast_model", type=str, default="ollama/llama3.2:3b", help="Model for fast, simple tasks")
+    
     args = parser.parse_args()
 
     # 1. Setup Storage
@@ -69,23 +72,26 @@ def main():
 
     # 3. Initialize Agents
     input_reader = InputReaderAgent("InputReader")
-    # Use Ollama by default (runs locally, NO API KEYS needed!)
-    # Install Ollama in Colab with: !curl -fsSL https://ollama.com/install.sh | sh
-    # Then run: !ollama serve & and !ollama pull llama3.2
-    model_name = os.environ.get("LITELLM_MODEL", "ollama/llama3.2")
     
-    script_writer = ScriptWriterAgent("ScriptWriter", config={"model_name": model_name})
-    script_critique = ScriptCritiqueAgent("ScriptCritique", config={"model_name": model_name})
+    # Tiered Model Mapping
+    reasoning_model = args.reasoning_model
+    fast_model = args.fast_model
     
-    character_designer = CharacterDesignAgent("CharacterDesigner", config={"model_name": model_name})
-    character_critique = CharacterCritiqueAgent("CharacterCritique", config={"model_name": model_name})
+    logger.info(f"🧠 Reasoning Model: {reasoning_model}")
+    logger.info(f"⚡ Fast Model: {fast_model}")
+
+    script_writer = ScriptWriterAgent("ScriptWriter", config={"model_name": reasoning_model})
+    script_critique = ScriptCritiqueAgent("ScriptCritique", config={"model_name": reasoning_model})
+    
+    character_designer = CharacterDesignAgent("CharacterDesigner", config={"model_name": reasoning_model})
+    character_critique = CharacterCritiqueAgent("CharacterCritique", config={"model_name": fast_model})
     
     consistency_manager = ConsistencyManager("ConsistencyManager")
-    director = DirectorAgent("Director", config={"model_name": model_name})
+    director = DirectorAgent("Director", config={"model_name": reasoning_model})
     
     illustrator = IllustratorAgent("Illustrator", image_generator=image_gen, consistency_manager=consistency_manager)
     layout_engine = LayoutEngine("LayoutEngine")
-    lettering_agent = LetteringAgent("LetteringAgent")
+    lettering_agent = LetteringAgent("LetteringAgent", config={"model_name": fast_model})
 
     # 4. Execution Pipeline
     try:
