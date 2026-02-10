@@ -64,10 +64,10 @@ def main():
 
     # 3. Initialize Agents
     input_reader = InputReaderAgent("InputReader")
-    # Use Google Gemini by default (FREE tier: 1500 requests/day)
+    # Use Google Gemini Pro (FREE tier, universally available)
     # Set GOOGLE_API_KEY env var (get free key from https://aistudio.google.com/apikey)
     # Override with LITELLM_MODEL env var for different models
-    model_name = os.environ.get("LITELLM_MODEL", "gemini/gemini-1.5-pro")
+    model_name = os.environ.get("LITELLM_MODEL", "gemini/gemini-pro")
     
     script_writer = ScriptWriterAgent("ScriptWriter", config={"model_name": model_name})
     script_critique = ScriptCritiqueAgent("ScriptCritique", config={"model_name": model_name})
