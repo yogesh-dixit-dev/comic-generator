@@ -81,43 +81,25 @@ class LLMInterface:
                 is_local = "ollama" in self.model_name or "local" in self.model_name
                 
                 if is_local:
-                    # Generate a concrete skeleton template instead of a technical spec
-                    def _get_skeleton(json_schema: dict) -> dict:
-                        """Recursively creates a minimal skeleton from a JSON schema."""
-                        if "properties" in json_schema:
-                            obj = {}
-                            for k, v in json_schema["properties"].items():
-                                if "type" in v:
-                                    if v["type"] == "array": obj[k] = []
-                                    elif v["type"] == "object": obj[k] = {}
-                                    elif v["type"] == "integer": obj[k] = 0
-                                    else: obj[k] = "..."
-                                else:
-                                    obj[k] = "..."
-                            return obj
-                        return {}
-
-                    try:
-                        full_schema = schema.model_json_schema()
-                        # We only show the top-level skeleton to keep it concise
-                        skeleton = _get_skeleton(full_schema)
-                        schema_desc = json.dumps(skeleton, indent=2)
-                    except:
-                        schema_desc = "{ \"title\": \"...\", \"synopsis\": \"...\", \"scenes\": [] }"
+                    from src.utils.json_resilience import JSONResilienceAgent
+                    resilience_agent = JSONResilienceAgent()
+                    
+                    # Generate a deep skeleton template
+                    schema_desc = resilience_agent.generate_deep_skeleton(schema)
 
                     if attempt == 0:
                         enhanced_system = (
                             f"{system_prompt}\n\n"
                             f"IMPORTANT: You MUST return ONLY a valid JSON object. No conversation, no preamble.\n"
-                            f"CRITICAL: Your output MUST follow this exact top-level structure:\n"
+                            f"CRITICAL: Your output MUST follow this exact nested structure:\n"
                             f"{schema_desc}\n\n"
-                            f"Do NOT invent nested levels (like 'part1' or 'story'). Use the keys above directly."
+                            f"Focus on content generation. Ensure all nested lists (scenes, panels, characters) are populated."
                         )
                     else:
                         # Even stricter on retries
                         enhanced_system = (
-                            f"Your previous output was invalid. You ignored the required structure.\n"
-                            f"YOU MUST RETURN ONLY THE DATA matching this structure:\n"
+                            f"Your previous output had validation errors. You likely hallucinated field names.\n"
+                            f"YOU MUST RETURN ONLY THE DATA matching this EXACT structure:\n"
                             f"{schema_desc}\n\n"
                             f"START YOUR RESPONSE WITH '{{' AND END WITH '}}'."
                         )
@@ -147,17 +129,22 @@ class LLMInterface:
                 # Use ultra-aggressive extractor
                 json_content = self._extract_json(content)
                 
-                # Safety log
-                logger.debug(f"Parsing JSON candidate (length {len(json_content)}): {json_content[:100]}...")
-                
                 if not json_content:
                     raise ValueError("Failed to extract any JSON-like content from response")
 
-                # Repair common mistakes
-                import re
-                repaired = re.sub(r',\s*([\]}])', r'\1', json_content) # Trailing commas
-                
-                data = json.loads(repaired)
+                # Use Resilience Agent for repair if local
+                if is_local:
+                    try:
+                        data = resilience_agent.repair_json(json_content, schema)
+                    except Exception as e:
+                        logger.warning(f"Resilience repair failed: {e}. Falling back to standard parse.")
+                        data = json.loads(json_content)
+                else:
+                    # Standard repair for cloud models
+                    import re
+                    repaired = re.sub(r',\s*([\]}])', r'\1', json_content)
+                    data = json.loads(repaired)
+
                 return schema.model_validate(data)
 
             except Exception as e:
