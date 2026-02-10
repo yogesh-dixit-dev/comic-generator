@@ -18,13 +18,16 @@ A modular, agent-based system for converting text (novels, stories, scripts) int
     ```
 3.  Set up your environment variables (create a `.env` file):
     ```bash
-    OPENAI_API_KEY=your_key_here
+    # Get FREE Gemini API key from: https://aistudio.google.com/apikey
+    GOOGLE_API_KEY=your_gemini_key_here
     
-    # Optional: Override the default model (gpt-3.5-turbo)
-    # Examples:
-    # LITELLM_MODEL=gpt-4o-mini      # Better quality but needs project access
-    # LITELLM_MODEL=gpt-4o           # Best quality, requires tier 1+ access
-    # LITELLM_MODEL=ollama/llama3    # Local inference with Ollama
+    # Optional: Use OpenAI instead (requires paid credits)
+    # OPENAI_API_KEY=your_key_here
+    # LITELLM_MODEL=gpt-3.5-turbo
+    
+    # Other free/local options:
+    # LITELLM_MODEL=groq/llama-3.1-8b-instant  # Free, very fast (needs GROQ_API_KEY)
+    # LITELLM_MODEL=ollama/llama3              # Local, completely offline
     ```
 
 ## Usage

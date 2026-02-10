@@ -64,9 +64,10 @@ def main():
 
     # 3. Initialize Agents
     input_reader = InputReaderAgent("InputReader")
-    # Use gpt-3.5-turbo by default (universal access, most cost-effective)
+    # Use Google Gemini by default (FREE tier: 1500 requests/day)
+    # Set GOOGLE_API_KEY env var (get free key from https://aistudio.google.com/apikey)
     # Override with LITELLM_MODEL env var for different models
-    model_name = os.environ.get("LITELLM_MODEL", "gpt-3.5-turbo")
+    model_name = os.environ.get("LITELLM_MODEL", "gemini/gemini-1.5-flash")
     
     script_writer = ScriptWriterAgent("ScriptWriter", config={"model_name": model_name})
     script_critique = ScriptCritiqueAgent("ScriptCritique", config={"model_name": model_name})
