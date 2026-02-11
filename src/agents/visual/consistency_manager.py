@@ -44,7 +44,7 @@ class ConsistencyManager(BaseAgent):
         
         return final_prompt
 
-    def _assemble_and_compress(self, base_parts: List[str], char_parts: List[Dict[str, str]], max_tokens: int = 70) -> str:
+    def _assemble_and_compress(self, base_parts: List[str], char_parts: List[Dict[str, str]], max_tokens: int = 225) -> str:
         """
         Assembles prompt parts and compresses character descriptions if they exceed the token limit.
         Uses a heuristic of 4 characters per token.
