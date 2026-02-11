@@ -217,10 +217,24 @@ def main():
         # Step 5: Visual Production (Scene by Scene)
         finished_pages = []
         for scene in script.scenes:
-            if scene.id <= state.last_scene_id:
+            # Robust Resume: Check if scene is marked done AND files exist on disk
+            scene_done = scene.id <= state.last_scene_id
+            files_exist = True
+            
+            if scene_done:
+                # Check for each panel's lettered image
+                for panel in scene.panels:
+                    # Deterministic naming allows us to predict the filename even if state is lost
+                    import hashlib
+                    h = hashlib.md5(panel.image_prompt.encode() if panel.image_prompt else "".encode()).hexdigest()[:8]
+                    expected_path = os.path.join("output", f"gen_{h}_lettered.png")
+                    if not os.path.exists(expected_path):
+                        files_exist = False
+                        logger.warning(f"Missing image for Scene {scene.id} Panel {panel.id} ({expected_path}). Re-producing...")
+                        break
+            
+            if scene_done and files_exist:
                 logger.info(f"⏭️ Skipping already produced Scene {scene.id}.")
-                # (Optional: Load previously rendered images if needed for layout engine later)
-                # For now, we assume the layout engine re-assembles or we need to persist finished_pages too
                 continue
 
             logger.info(f"🎬 Producing Scene {scene.id}: {scene.location}")

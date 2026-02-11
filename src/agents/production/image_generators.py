@@ -187,7 +187,7 @@ class DiffusersImageGenerator(ImageGeneratorInterface):
             import hashlib
             import time
             hash_object = hashlib.md5(prompt.encode())
-            filename = f"gen_{hash_object.hexdigest()[:8]}_{int(time.time())}.png"
+            filename = f"gen_{hash_object.hexdigest()[:8]}.png"
             filepath = os.path.join(output_dir, filename)
             
             image.save(filepath)
@@ -202,7 +202,8 @@ class DiffusersImageGenerator(ImageGeneratorInterface):
             logger.error(f"Diffusers generation failed: {e}")
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            raise
+            # Stop swallowing exceptions - raise so pipeline knows we failed
+            raise 
 
     def generate_batch(self, prompts: List[str], negative_prompt: str = "", **kwargs) -> List[str]:
         """
@@ -245,11 +246,11 @@ class DiffusersImageGenerator(ImageGeneratorInterface):
             paths = []
             output_dir = "output"
             import hashlib
-            import time
             
             for i, image in enumerate(images):
                 hash_object = hashlib.md5(prompts[i].encode())
-                filename = f"gen_batch_{i}_{hash_object.hexdigest()[:8]}_{int(time.time())}.png"
+                # Use deterministic naming for batch too
+                filename = f"gen_{hash_object.hexdigest()[:8]}.png"
                 filepath = os.path.join(output_dir, filename)
                 image.save(filepath)
                 paths.append(filepath)
@@ -262,4 +263,5 @@ class DiffusersImageGenerator(ImageGeneratorInterface):
             logger.error(f"Batch generation failed: {e}")
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            return [self.generate(p, negative_prompt=negative_prompt, **kwargs) for p in prompts]
+            # Stop swallowing exceptions - raise so pipeline knows we failed
+            raise

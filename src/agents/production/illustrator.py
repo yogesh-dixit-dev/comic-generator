@@ -32,6 +32,7 @@ class IllustratorAgent(BaseAgent):
             self.logger.info(f"Generated image saved at: {image_path}")
         except Exception as e:
             self.logger.error(f"Image generation failed for Panel {panel.id}: {e}")
+            raise # Propagate error to pipeline
             
         return panel
 
@@ -61,8 +62,8 @@ class IllustratorAgent(BaseAgent):
                     self.logger.info(f"Generated image for Panel {panels[i].id} saved at: {path}")
         except Exception as e:
             self.logger.error(f"Batch image generation failed: {e}. Falling back to sequential.")
-            # Fallback to sequential
+            # Fallback to sequential, but still let it raise if sequential also fails
             for panel in panels:
-                self.process(panel, characters)
+                self.process(panel, characters, style_guide=style_guide)
                 
         return panels
