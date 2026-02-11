@@ -50,6 +50,7 @@ def main():
     
     parser.add_argument("--reasoning_model", type=str, default="ollama/llama3.1", help="Model for complex reasoning tasks")
     parser.add_argument("--fast_model", type=str, default="ollama/llama3.2", help="Model for fast, simple tasks")
+    parser.add_argument("--phase", type=str, choices=["all", "plan", "draw"], default="all", help="Execution phase: all (default), plan (narrative+visual planning), or draw (isolated image generation)")
     
     args = parser.parse_args()
 
@@ -209,74 +210,95 @@ def main():
 
         # Step 5: Visual Planning Phase (LLM Heavy)
         # We pre-calculate all scene plans BEFORE starting image generation to avoid VRAM competition.
-        logger.info("📐 Starting Visual Planning Phase...")
-        scene_plans = {}
-        for scene in script.scenes:
-            # Check if we should skip planning if scene images already exist
-            scene_done = scene.id <= state.last_scene_id
-            files_exist = True
-            if scene_done:
-                for panel in scene.panels:
-                    import hashlib
-                    h = hashlib.md5(panel.image_prompt.encode() if panel.image_prompt else "".encode()).hexdigest()[:8]
-                    if not os.path.exists(os.path.join("output", f"gen_{h}_lettered.png")):
-                        files_exist = False
-                        break
-            
-            if scene_done and files_exist:
-                continue
+        if args.phase in ["all", "plan"]:
+            logger.info("📐 Starting Visual Planning Phase...")
+            for scene in script.scenes:
+                # Check if we should skip planning if scene images already exist
+                scene_done = scene.id <= state.last_scene_id
+                files_exist = True
+                if scene_done:
+                    for panel in scene.panels:
+                        import hashlib
+                        h = hashlib.md5(panel.image_prompt.encode() if panel.image_prompt else "".encode()).hexdigest()[:8]
+                        if not os.path.exists(os.path.join("output", f"gen_{h}_lettered.png")):
+                            files_exist = False
+                            break
+                
+                if scene_done and files_exist:
+                    continue
 
-            logger.info(f"📋 Planning Scene {scene.id}: {scene.location}...")
-            scene_plans[scene.id] = director.run(scene)
+                if str(scene.id) in state.scene_plans or scene.id in state.scene_plans:
+                     logger.info(f"⏭️ Skipping Planning for Scene {scene.id} (already planned).")
+                     continue
+
+                logger.info(f"📋 Planning Scene {scene.id}: {scene.location}...")
+                state.scene_plans[scene.id] = director.run(scene).dict() # Store as dict for serialization
+                
+            # Save Checkpoint after planning all scenes
+            checkpoint_mgr.save_checkpoint(state)
             
+            if args.phase == "plan":
+                logger.info("🏁 Planning Phase Complete. Exiting to free GPU for drawing.")
+                return
+
         # Step 6: GPU Isolate Phase (Cleanup)
         # Force unload all Ollama models from VRAM before starting SDXL.
-        logger.info("🧹 Clearing GPU for Image Generation...")
-        
-        # 1. Unload Thinking/Reasoning models
-        reasoning_llm.unload_model()
-        
-        # 2. Unload Fast/Utility models (for Character Critique/Lettering setup)
-        from src.utils.llm_interface import LLMInterface
-        fast_llm = LLMInterface(model_name=args.fast_model)
-        fast_llm.unload_model()
-        
-        # 3. Deep Garbage Collection
-        import gc
-        import time
-        import torch
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        if args.phase in ["all", "draw"]:
+            logger.info("🧹 Clearing GPU for Image Generation...")
             
-        logger.info("✅ GPU Isolated. Waiting 2s for VRAM to settle...")
-        time.sleep(2)
+            # 1. Unload Thinking/Reasoning models
+            reasoning_llm.unload_model()
+            
+            # 2. Unload Fast/Utility models (for Character Critique/Lettering setup)
+            from src.utils.llm_interface import LLMInterface
+            fast_llm = LLMInterface(model_name=args.fast_model)
+            fast_llm.unload_model()
+            
+            # 3. Deep Garbage Collection
+            import gc
+            import time
+            import torch
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                
+            logger.info("✅ GPU Isolated. Waiting 2s for VRAM to settle...")
+            time.sleep(2)
 
         # Step 7: Visual Production Phase (GPU Heavy)
-        # Delay loading SDXL until LLMs are fully unloaded from VRAM.
-        if args.colab and not isinstance(image_gen, DiffusersImageGenerator):
-            logger.info("🚀 Loading Diffusers Image Generator (Isolated Mode)...")
-            try:
-                # Reload the generator in isolated context
-                image_gen = DiffusersImageGenerator(model_id="stabilityai/stable-diffusion-xl-base-1.0", device="cuda")
-                illustrator.image_generator = image_gen
-            except Exception as e:
-                logger.error(f"Failed to load Diffusers: {e}. Falling back to Mock.")
-                image_gen = MockImageGenerator()
-                illustrator.image_generator = image_gen
+        if args.phase in ["all", "draw"]:
+            # Delay loading SDXL until LLMs are fully unloaded from VRAM.
+            if args.colab and not isinstance(image_gen, DiffusersImageGenerator):
+                logger.info("🚀 Loading Diffusers Image Generator (Isolated Mode)...")
+                try:
+                    # Reload the generator in isolated context
+                    image_gen = DiffusersImageGenerator(model_id="stabilityai/stable-diffusion-xl-base-1.0", device="cuda")
+                    illustrator.image_generator = image_gen
+                except Exception as e:
+                    logger.error(f"Failed to load Diffusers: {e}. Falling back to Mock.")
+                    image_gen = MockImageGenerator()
+                    illustrator.image_generator = image_gen
 
-        finished_pages = []
-        for scene in script.scenes:
-            if scene.id not in scene_plans:
-                # Scene was skipped in planning
-                continue
+            finished_pages = []
+            for scene in script.scenes:
+                # Retrieve plan from state
+                scene_plan_data = state.scene_plans.get(scene.id) or state.scene_plans.get(str(scene.id))
+                
+                if not scene_plan_data:
+                    # Robust Resume: If plan is missing but we're in draw mode, we might need to re-plan or error
+                    if args.phase == "draw":
+                        logger.warning(f"⚠️ Plan missing for Scene {scene.id}. Re-planning in Draw mode...")
+                        scene_plan_data = director.run(scene).dict()
+                    else:
+                         continue
 
-            logger.info(f"🎨 Drawing Scene {scene.id}...")
-            scene_plan = scene_plans[scene.id]
-            
-            # Illustrator generates images (Batch Optimized)
-            # This now runs in an isolated GPU environment
-            illustrator.run_batch(scene_plan.panels, characters=characters, style_guide=script.style_guide)
+                logger.info(f"🎨 Drawing Scene {scene.id}...")
+                # Re-validate model if it was stored as dict
+                from src.core.models import ScenePlan
+                scene_plan = ScenePlan.model_validate(scene_plan_data)
+                
+                # Illustrator generates images (Batch Optimized)
+                illustrator.run_batch(scene_plan.panels, characters=characters, style_guide=script.style_guide)
             
             # Step 8: Layout & Lettering (Per Scene for now, or Per Page)
             logger.info(f"📐 Assembling Scene {scene.id}...")

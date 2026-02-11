@@ -70,31 +70,23 @@ class LLMInterface:
         cleaned = text.strip()
         return cleaned if cleaned else "{}"
 
-    def generate_structured_output(self, prompt: str, schema: Type[T], system_prompt: str = "You are a helpful assistant. Respond ONLY with valid JSON.") -> T:
-        """
-        Generates a response from the LLM with optimized latency and resilience.
-        """
-        max_retries = 3
-        last_error = None
-        
-        # Pre-cache schema skeleton
-        resilience = LLMInterface._resilience_agent
-        schema_skeleton = resilience.generate_deep_skeleton(schema)
-        is_local = "ollama" in self.model_name or "local" in self.model_name
-        
+
     def is_healthy(self) -> bool:
         """
         Checks if the LLM backend is reachable.
-        Specifically useful for Ollama.
+        Tries both localhost and 127.0.0.1 for maximum compatibility.
         """
         if "ollama" in self.model_name or "local" in self.model_name:
             import requests
-            try:
-                # Standard Ollama health endpoint
-                resp = requests.get("http://localhost:11434/api/tags", timeout=5)
-                return resp.status_code == 200
-            except Exception:
-                return False
+            for host in ["localhost", "127.0.0.1"]:
+                try:
+                    url = f"http://{host}:11434/api/tags"
+                    resp = requests.get(url, timeout=2)
+                    if resp.status_code == 200:
+                        return True
+                except Exception:
+                    continue
+            return False
         return True # Assume cloud models are healthy if API keys are present
 
     def generate_structured_output(self, prompt: str, schema: Type[T], system_prompt: str = "You are a helpful assistant. Respond ONLY with valid JSON.") -> T:
