@@ -14,15 +14,18 @@ class ConsistencyManager(BaseAgent):
         """
         self.logger.info(f"Generating consistent prompt for Panel {panel.id}...")
         
-        # Base prompt from panel description
-        # Priority: Style Guide from Script > Style Preset from Config
         style = style_guide or self.style_preset
-        prompt_parts = [style, panel.description]
+        base_parts = [style, panel.description]
         
-        # Add character details if present in the panel
+        if panel.camera_angle:
+            base_parts.append(f"Camera: {panel.camera_angle}")
+        if panel.lighting:
+            base_parts.append(f"Lighting: {panel.lighting}")
+
+        # Character parts are handled separately for compression
+        char_parts = []
         if panel.characters_present:
             for char_name in panel.characters_present:
-                # Find the character object (check name or aliases)
                 character = None
                 for c in characters:
                     if c.name.lower() == char_name.lower() or any(alias.lower() == char_name.lower() for alias in c.aliases):
@@ -30,17 +33,59 @@ class ConsistencyManager(BaseAgent):
                         break
                 
                 if character:
-                    # Append strict visual description to the prompt
-                    # In a more advanced version, this would trigger IP-Adapter or LoRA loading
-                    prompt_parts.append(f"({character.name}: {character.description}, {character.personality} expression)")
-        
-        # Add camera/lighting if specified
-        if panel.camera_angle:
-            prompt_parts.append(f"Camera: {panel.camera_angle}")
-        if panel.lighting:
-            prompt_parts.append(f"Lighting: {panel.lighting}")
-            
-        final_prompt = ", ".join(prompt_parts)
+                    char_parts.append({
+                        "name": character.name,
+                        "desc": character.description,
+                        "personality": character.personality
+                    })
+
+        final_prompt = self._assemble_and_compress(base_parts, char_parts)
         self.logger.debug(f"Final Prompt: {final_prompt}")
         
         return final_prompt
+
+    def _assemble_and_compress(self, base_parts: List[str], char_parts: List[Dict[str, str]], max_tokens: int = 70) -> str:
+        """
+        Assembles prompt parts and compresses character descriptions if they exceed the token limit.
+        Uses a heuristic of 4 characters per token.
+        """
+        char_limit = max_tokens * 4
+        
+        # 1. First Pass: Full descriptions
+        full_char_strings = [f"({c['name']}: {c['desc']}, {c['personality']} expression)" for c in char_parts]
+        combined = ", ".join(base_parts + full_char_strings)
+        
+        if len(combined) <= char_limit:
+            return combined
+
+        # 2. Second Pass: Drop personalities
+        self.logger.warning(f"Prompt exceeds ~{max_tokens} tokens. Dropping personality traits...")
+        compressed_chars = [f"({c['name']}: {c['desc']})" for c in char_parts]
+        combined = ", ".join(base_parts + compressed_chars)
+        
+        if len(combined) <= char_limit:
+            return combined
+
+        # 3. Third Pass: Aggressively truncate individual character descriptions
+        # We calculate remaining space for characters
+        base_str = ", ".join(base_parts)
+        remaining_chars = char_limit - len(base_str) - (len(char_parts) * 5) # 5 for ", ()" overhead
+        
+        if remaining_chars > 0:
+            per_char_limit = remaining_chars // len(char_parts)
+            truncated_chars = []
+            for c in char_parts:
+                char_prompt = f"{c['name']}: {c['desc']}"
+                if len(char_prompt) > per_char_limit:
+                    char_prompt = char_prompt[:per_char_limit-3] + "..."
+                truncated_chars.append(f"({char_prompt})")
+            combined = base_str + ", " + ", ".join(truncated_chars)
+        else:
+            # If base prompt is already too long, we just keep the names
+            combined = base_str + ", " + ", ".join([f"({c['name']})" for c in char_parts])
+
+        # 4. Final hard cut safety
+        if len(combined) > char_limit:
+             return combined[:char_limit]
+
+        return combined
