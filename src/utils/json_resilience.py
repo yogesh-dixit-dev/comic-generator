@@ -100,6 +100,12 @@ class JSONResilienceAgent:
                 inner_args = get_args(field_type)
                 if inner_args and self._is_pydantic_base(inner_args[0]):
                     obj[name] = [self._build_obj(self._get_base_model(inner_args[0]))]
+                elif inner_args and get_origin(inner_args[0]) is dict or inner_args[0] is dict:
+                    # Specialized skeleton for dialogue or generic Dict lists
+                    if "dialogue" in name.lower():
+                        obj[name] = [{"speaker": "Character Name", "text": "Dialogue text..."}]
+                    else:
+                        obj[name] = [{"key": "value"}]
                 else:
                     obj[name] = ["..."]
                 continue
@@ -131,11 +137,6 @@ class JSONResilienceAgent:
             return [self._repair_align(item, base_model, i) for i, item in enumerate(data)]
         
         final_data = self._repair_align(data, schema)
-        
-        if "scenes" in final_data and isinstance(final_data["scenes"], list):
-            from src.core.models import Scene
-            final_data["scenes"] = [self._repair_align(s, Scene, i) for i, s in enumerate(final_data["scenes"])]
-            
         return final_data
 
     def _repair_flatten(self, o: Any) -> str:
@@ -148,8 +149,8 @@ class JSONResilienceAgent:
         return str(o)
 
     def _repair_nested(self, val: Any, annot: Any) -> Any:
-        if self._is_pydantic_base(annot):
-            if isinstance(val, (dict, list)):
+        if self._is_pydantic_base(annot) and not (get_origin(annot) is list):
+            if isinstance(val, dict):
                 return self._repair_align(val, self._get_base_model(annot))
             return val
         
@@ -180,16 +181,22 @@ class JSONResilienceAgent:
 
             if is_dict_like:
                 repaired_list = []
-                for item in val:
+                for i, item in enumerate(val):
                     if isinstance(item, dict):
-                        repaired_list.append(self._repair_align(item, self._get_base_model(inner_type)) if self._is_pydantic_base(inner_type) else item)
+                        repaired_list.append(self._repair_align(item, self._get_base_model(inner_type), i) if self._is_pydantic_base(inner_type) else item)
                     elif isinstance(item, str) and item.strip():
                         # Aggressive Dialogue Splitter
-                        if ":" in item:
-                            parts = item.split(":", 1)
+                        s_item = item.strip()
+                        # Handle cases where the LLM might have quoted the whole string but it's meant to be dialogue
+                        if (s_item.startswith("'") and s_item.endswith("'")) or (s_item.startswith('"') and s_item.endswith('"')):
+                            s_item = s_item[1:-1].strip()
+                            
+                        if ":" in s_item:
+                            parts = s_item.split(":", 1)
                             repaired_list.append({"speaker": parts[0].strip(), "text": parts[1].strip()})
                         else:
-                            repaired_list.append({"speaker": "Narrator", "text": item.strip()})
+                            # Try to infer speaker or just use Narrator
+                            repaired_list.append({"speaker": "Narrator", "text": s_item})
                     elif item: # Catch-all for other non-empty types
                          repaired_list.append({"speaker": "Narrator", "text": str(item)})
                 return repaired_list

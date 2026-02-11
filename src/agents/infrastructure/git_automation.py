@@ -13,6 +13,13 @@ class GitAutomationAgent(BaseAgent):
         """
         self.logger.info("Starting Git Automation...")
         
+        # 0. Core Quality Check
+        from src.agents.infrastructure.qa_agent import QualityAssuranceAgent
+        qa = QualityAssuranceAgent()
+        if not qa.run_all_checks():
+            self.logger.error("Abort: Quality checks failed. Fix the issues before pushing.")
+            return "Failure: Quality checks failed."
+
         # 1. Check if git is initialized
         if not os.path.isdir(".git"):
             self.logger.error("Not a git repository. Please initialize git first.")

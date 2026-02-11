@@ -1,0 +1,140 @@
+﻿.\venv\Scripts\python.exe : test_hashing (test_che
+ckpoint.TestCheckpointSystem.test_hashing)
+At line:1 char:1
++ .\venv\Scripts\python.exe -m unittest discover 
+tests -v 2>&1 | Out-Fi ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (test 
+   _hashing (t...m.test_hashing):String) [], Rem  
+  oteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+Verify that hashing is consistent for the same 
+content. ... ok
+test_resume_different_story (test_checkpoint.TestC
+heckpointSystem.test_resume_different_story)
+Verify that a different story doesn't load a 
+mismatched checkpoint. ... 2026-02-11 
+10:56:40,661 - CheckpointManager - INFO - 
+\U0001f4be Checkpoint saved locally to C:\Users\ya
+shs\AppData\Local\Temp\tmpa83cyxix\.checkpoints\ch
+eckpoint_d218c151c4a9.json
+2026-02-11 10:56:40,661 - CheckpointManager - 
+INFO - \u2601\ufe0f Background git sync complete.
+ok
+test_save_load_checkpoint (test_checkpoint.TestChe
+ckpointSystem.test_save_load_checkpoint)
+Verify that state is preserved through save/load 
+cycle. ... 2026-02-11 10:56:40,669 - 
+CheckpointManager - INFO - \U0001f4be Checkpoint 
+saved locally to C:\Users\yashs\AppData\Local\Temp
+\tmpt0s64hz1\.checkpoints\checkpoint_d218c151c4a9.
+json
+2026-02-11 10:56:40,670 - CheckpointManager - 
+INFO - \u2601\ufe0f Background git sync complete.
+2026-02-11 10:56:40,671 - CheckpointManager - 
+INFO - \U0001f504 Checkpoint loaded successfully 
+from C:\Users\yashs\AppData\Local\Temp\tmpt0s64hz1
+\.checkpoints\checkpoint_d218c151c4a9.json
+ok
+test_stage_property_logic (test_checkpoint.TestChe
+ckpointSystem.test_stage_property_logic)
+Verify the stage calculation logic in 
+PipelineState. ... ERROR
+test_aggressive_scene_mapping (test_json_resilienc
+e.TestJSONResilience.test_aggressive_scene_mapping
+)
+Verify that Llama's 'title/text' scenes are 
+mapped correctly. ... ok
+test_auto_generated_ids (test_json_resilience.Test
+JSONResilience.test_auto_generated_ids)
+Verify that lists of objects get sequential IDs 
+if missing. ... ok
+test_case_insensitivity (test_json_resilience.Test
+JSONResilience.test_case_insensitivity) ... ok
+test_dialogue_repair (test_json_resilience.TestJSO
+NResilience.test_dialogue_repair)
+Verify that string-based dialogue lists are 
+repaired to speaker/text dicts. ... ok
+test_float_id_normalization (test_json_resilience.
+TestJSONResilience.test_float_id_normalization)
+Verify that floating point IDs (e.g. 1.1) are 
+truncated to integers. ... ok
+test_heuristic_repair_panel_id (test_json_resilien
+ce.TestJSONResilience.test_heuristic_repair_panel_
+id)
+Verify that 'panel_id' is correctly mapped to 
+'id'. ... ok
+test_optional_model_handling (test_json_resilience
+.TestJSONResilience.test_optional_model_handling)
+Verify that Optional[BaseModel] is handled 
+correctly. ... ok
+test_scene_field_fallbacks (test_json_resilience.T
+estJSONResilience.test_scene_field_fallbacks)
+Verify that missing Scene fields are filled from 
+common LLM hallucinations. ... ok
+test_skeleton_generation (test_json_resilience.Tes
+tJSONResilience.test_skeleton_generation)
+Verify that deep skeletons contain nested keys 
+like 'panels' and 'characters'. ... ok
+test_chunk_text (test_parsing.TestParsingReliabili
+ty.test_chunk_text) ... ok
+test_extract_json_empty_fail (test_parsing.TestPar
+singReliability.test_extract_json_empty_fail) ... 
+ok
+test_extract_json_list (test_parsing.TestParsingRe
+liability.test_extract_json_list) ... ok
+test_extract_json_markdown (test_parsing.TestParsi
+ngReliability.test_extract_json_markdown) ... ok
+test_extract_json_nested (test_parsing.TestParsing
+Reliability.test_extract_json_nested) ... ok
+test_extract_json_trailing_comma (test_parsing.Tes
+tParsingReliability.test_extract_json_trailing_com
+ma) ... ok
+test_extract_json_with_preamble (test_parsing.Test
+ParsingReliability.test_extract_json_with_preamble
+) ... ok
+test_read_docx_mock (test_parsing.TestParsingRelia
+bility.test_read_docx_mock) ... ok
+test_read_pdf_mock (test_parsing.TestParsingReliab
+ility.test_read_pdf_mock) ... ok
+test_read_txt (test_parsing.TestParsingReliability
+.test_read_txt) ... ok
+
+==================================================
+====================
+ERROR: test_stage_property_logic (test_checkpoint.
+TestCheckpointSystem.test_stage_property_logic)
+Verify the stage calculation logic in 
+PipelineState.
+--------------------------------------------------
+--------------------
+Traceback (most recent call last):
+  File "C:\Users\yashs\antigravity\tests\test_chec
+kpoint.py", line 75, in test_stage_property_logic
+    state.characters = [Character(name="M", 
+description="D", personality="P")]
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\yashs\antigravity\venv\Lib\site-p
+ackages\pydantic\main.py", line 250, in __init__
+    validated_self = 
+self.__pydantic_validator__.validate_python(data, 
+self_instance=self)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pydantic_core._pydantic_core.ValidationError: 1 
+validation error for Character
+pronouns
+  Field required [type=missing, 
+input_value={'name': 'M', 'descriptio...'D', 
+'personality': 'P'}, input_type=dict]
+    For further information visit 
+https://errors.pydantic.dev/2.12/v/missing
+
+--------------------------------------------------
+--------------------
+Ran 23 tests in 0.026s
+
+FAILED (errors=1)

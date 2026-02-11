@@ -13,6 +13,11 @@ class TestCheckpointSystem(unittest.TestCase):
         self.storage = LocalStorage()
         self.manager = CheckpointManager(self.storage, checkpoint_dir=os.path.join(self.test_dir, ".checkpoints"))
         
+        # Mock GitAutomationAgent to prevent it from trying to run git commands in tests
+        from unittest.mock import patch
+        self.patcher = patch('src.agents.infrastructure.git_automation.GitAutomationAgent')
+        self.mock_git = self.patcher.start()
+        
         # Create a dummy input file
         self.input_file = os.path.join(self.test_dir, "input.txt")
         with open(self.input_file, "w") as f:
@@ -21,6 +26,7 @@ class TestCheckpointSystem(unittest.TestCase):
         self.input_hash = self.manager.get_input_hash(self.input_file)
 
     def tearDown(self):
+        self.patcher.stop()
         shutil.rmtree(self.test_dir)
 
     def test_hashing(self):
@@ -66,7 +72,7 @@ class TestCheckpointSystem(unittest.TestCase):
         
         # Note: Production stage requires characters list to be non-empty
         from src.core.models import Character
-        state.characters = [Character(name="M", description="D", personality="P")]
+        state.characters = [Character(name="M", description="D", personality="P", pronouns="They/Them")]
         self.assertEqual(state.stage, "production")
 
 if __name__ == "__main__":

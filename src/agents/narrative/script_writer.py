@@ -21,19 +21,38 @@ class ScriptWriterAgent(BaseAgent):
         - Breakdown the story into logically sequentially scenes and panels.
         - Provide vivid visual descriptions for each panel.
         - Ensure character names and descriptions are consistent throughout.
-        - Keep dialogue concise and punchy.
+        - Dialogue MUST be a list of objects with "speaker" and "text" keys.
         
-        Example Output Format:
+        CRITICAL: Follow the exact JSON structure provided in the schema.
+        
+        Example Output:
         {
           "title": "The Boy and the Sun",
-          "synopsis": "A story about a desert shepherd...",
+          "synopsis": "A story about a desert shepherd seeking his destiny.",
           "scenes": [
             {
               "id": 1,
               "location": "Desert Oasis",
-              "narrative_summary": "Santiago wakes up...",
-              "characters": [{"name": "Santiago", "description": "Young boy", "personality": "Curious"}],
-              "panels": [...]
+              "narrative_summary": "Santiago wakes up under a sycamore tree.",
+              "characters": [
+                {
+                  "name": "Santiago",
+                  "pronouns": "He/Him",
+                  "description": "Young shepherd in worn clothes",
+                  "personality": "Curious and determined"
+                }
+              ],
+              "panels": [
+                {
+                  "id": 1,
+                  "description": "Wide shot of Santiago waking up.",
+                  "dialogue": [
+                    {"speaker": "Santiago", "text": "Another day in the heat."}
+                  ],
+                  "characters_present": ["Santiago"],
+                  "camera_angle": "Wide shot"
+                }
+              ]
             }
           ]
         }

@@ -48,7 +48,13 @@ class BaseAgent(ABC):
         self.logger.info(f"Starting execution for {self.name}...")
         try:
             # 1. Process
-            result = self.process(input_data)
+            from src.agents.infrastructure.resilience_agent import safe_retry
+            
+            @safe_retry(tries=3, delay=1, backoff=2)
+            def inner_process():
+                return self.process(input_data)
+            
+            result = inner_process()
             
             # 2. Validation
             if expected_schema:
