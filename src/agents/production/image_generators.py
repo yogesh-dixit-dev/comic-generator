@@ -67,8 +67,10 @@ class DiffusersImageGenerator(ImageGeneratorInterface):
             # Fix upcast_vae deprecation: explicitly move VAE to float32
             self.pipe.vae.to(dtype=torch.float32)
             
-            # Enable memory optimizations for Colab T4
-            self.pipe.enable_model_cpu_offload() 
+            # Optimization for T4 16GB: Use VAE tiling/slicing instead of CPU offload
+            # This prevents the "hang" during the final decoding step after 100% denoising.
+            self.pipe.enable_vae_tiling()
+            self.pipe.enable_vae_slicing()
             
             # Speed Optimization: Use faster scheduler for Turbo/Lightning if detected
             if "turbo" in model_id.lower() or "lightning" in model_id.lower():
