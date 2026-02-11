@@ -1,5 +1,6 @@
 import os
 import logging
+import gc
 from typing import Optional, List
 from src.core.image_interface import ImageGeneratorInterface
 
@@ -63,14 +64,22 @@ class DiffusersImageGenerator(ImageGeneratorInterface):
                 use_safetensors=True, 
                 variant="fp16"
             )
-            # Extreme Memory Stability for T4 (16GB) share with Ollama: 
-            # Sequential offload is slower but reduces VRAM usage to ~2GB.
+            # Ultra-Stability for T4 (16GB) share with Ollama:
+            # 1. Sequential offload reduces VRAM usage to ~2GB by loading layers one-by-one.
             self.pipe.enable_sequential_cpu_offload()
             
-            # NOTE: We keep VAE in float16 (pipeline default) to match UNet latents 
-            # and avoid "Half vs Float" type mismatch errors.
+            # 2. Force VAE to float16 to match UNet latents and avoid type mismatch errors.
+            # We explicitly cast to ensure no bias/weight is left as float32.
+            self.pipe.vae.to(dtype=torch.float16)
             
-            # Additional decoder optimizations to prevent hangs and OOM at final step
+            # 3. Enable xFormers for memory-efficient attention (if installed)
+            try:
+                self.pipe.enable_xformers_memory_efficient_attention()
+                logger.info("✅ xFormers enabled.")
+            except Exception:
+                logger.warning("⚠️ xFormers not available, skipping.")
+            
+            # 4. Standard decoder optimizations
             self.pipe.enable_vae_tiling()
             self.pipe.enable_vae_slicing()
             self.pipe.enable_attention_slicing()
@@ -167,6 +176,11 @@ class DiffusersImageGenerator(ImageGeneratorInterface):
     def generate(self, prompt: str, negative_prompt: str = "", width: int = 1024, height: int = 1024, seed: Optional[int] = None) -> str:
         logger.info(f"Generating Image with Diffusers: {prompt[:100]}...")
         
+        # Aggressive memory cleanup before generation
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            
         generator = None
         if seed is not None:
             generator = torch.Generator(device=self.device).manual_seed(seed)
@@ -203,6 +217,7 @@ class DiffusersImageGenerator(ImageGeneratorInterface):
             image.save(filepath)
             
             # Memory Safety
+            gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 
@@ -210,6 +225,7 @@ class DiffusersImageGenerator(ImageGeneratorInterface):
             
         except Exception as e:
             logger.error(f"Diffusers generation failed: {e}")
+            gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             # Stop swallowing exceptions - raise so pipeline knows we failed
@@ -221,6 +237,12 @@ class DiffusersImageGenerator(ImageGeneratorInterface):
         Supports long prompts by chunking.
         """
         logger.info(f"Batch generating {len(prompts)} images...")
+        
+        # Aggressive memory cleanup before batch
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            
         try:
             # Encode each prompt in the batch
             all_p_embeds = []
@@ -265,12 +287,14 @@ class DiffusersImageGenerator(ImageGeneratorInterface):
                 image.save(filepath)
                 paths.append(filepath)
             
+            gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 
             return paths
         except Exception as e:
             logger.error(f"Batch generation failed: {e}")
+            gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             # Stop swallowing exceptions - raise so pipeline knows we failed
