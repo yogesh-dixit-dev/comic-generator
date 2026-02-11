@@ -66,16 +66,9 @@ def main():
     else:
         storage = LocalStorage()
 
-    # 2. Select Image Generator
-    if args.colab:
-        # Use Diffusers (requires GPU)
-        try:
-            image_gen = DiffusersImageGenerator(model_id="stabilityai/stable-diffusion-xl-base-1.0", device="cuda")
-        except Exception as e:
-            logger.error(f"Failed to load Diffusers: {e}. Falling back to Mock.")
-            image_gen = MockImageGenerator()
-    else:
-        image_gen = MockImageGenerator()
+    # 2. Select Image Generator (Initially Mock to save VRAM during LLM planning)
+    # Real generator (Diffusers) will be loaded in the visual production phase if --colab is set.
+    image_gen = MockImageGenerator()
 
     # Early exit for validation/CI runs
     if os.environ.get("PIPELINE_VALIDATION_RUN"):
@@ -214,43 +207,81 @@ def main():
             state.characters = characters
             checkpoint_mgr.save_checkpoint(state)
 
-        # Step 5: Visual Production (Scene by Scene)
-        finished_pages = []
+        # Step 5: Visual Planning Phase (LLM Heavy)
+        # We pre-calculate all scene plans BEFORE starting image generation to avoid VRAM competition.
+        logger.info("📐 Starting Visual Planning Phase...")
+        scene_plans = {}
         for scene in script.scenes:
-            # Robust Resume: Check if scene is marked done AND files exist on disk
+            # Check if we should skip planning if scene images already exist
             scene_done = scene.id <= state.last_scene_id
             files_exist = True
-            
             if scene_done:
-                # Check for each panel's lettered image
                 for panel in scene.panels:
-                    # Deterministic naming allows us to predict the filename even if state is lost
                     import hashlib
                     h = hashlib.md5(panel.image_prompt.encode() if panel.image_prompt else "".encode()).hexdigest()[:8]
-                    expected_path = os.path.join("output", f"gen_{h}_lettered.png")
-                    if not os.path.exists(expected_path):
+                    if not os.path.exists(os.path.join("output", f"gen_{h}_lettered.png")):
                         files_exist = False
-                        logger.warning(f"Missing image for Scene {scene.id} Panel {panel.id} ({expected_path}). Re-producing...")
                         break
             
             if scene_done and files_exist:
-                logger.info(f"⏭️ Skipping already produced Scene {scene.id}.")
                 continue
 
-            logger.info(f"🎬 Producing Scene {scene.id}: {scene.location}")
+            logger.info(f"📋 Planning Scene {scene.id}: {scene.location}...")
+            scene_plans[scene.id] = director.run(scene)
             
-            # Director plans the shots
-            scene_plan = director.run(scene)
+        # Step 6: GPU Isolate Phase (Cleanup)
+        # Force unload all Ollama models from VRAM before starting SDXL.
+        logger.info("🧹 Clearing GPU for Image Generation...")
+        
+        # 1. Unload Thinking/Reasoning models
+        reasoning_llm.unload_model()
+        
+        # 2. Unload Fast/Utility models (for Character Critique/Lettering setup)
+        from src.utils.llm_interface import LLMInterface
+        fast_llm = LLMInterface(model_name=args.fast_model)
+        fast_llm.unload_model()
+        
+        # 3. Deep Garbage Collection
+        import gc
+        import time
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            
+        logger.info("✅ GPU Isolated. Waiting 2s for VRAM to settle...")
+        time.sleep(2)
+
+        # Step 7: Visual Production Phase (GPU Heavy)
+        # Delay loading SDXL until LLMs are fully unloaded from VRAM.
+        if args.colab and not isinstance(image_gen, DiffusersImageGenerator):
+            logger.info("🚀 Loading Diffusers Image Generator (Isolated Mode)...")
+            try:
+                # Reload the generator in isolated context
+                image_gen = DiffusersImageGenerator(model_id="stabilityai/stable-diffusion-xl-base-1.0", device="cuda")
+                illustrator.image_generator = image_gen
+            except Exception as e:
+                logger.error(f"Failed to load Diffusers: {e}. Falling back to Mock.")
+                image_gen = MockImageGenerator()
+                illustrator.image_generator = image_gen
+
+        finished_pages = []
+        for scene in script.scenes:
+            if scene.id not in scene_plans:
+                # Scene was skipped in planning
+                continue
+
+            logger.info(f"🎨 Drawing Scene {scene.id}...")
+            scene_plan = scene_plans[scene.id]
             
             # Illustrator generates images (Batch Optimized)
+            # This now runs in an isolated GPU environment
             illustrator.run_batch(scene_plan.panels, characters=characters, style_guide=script.style_guide)
             
-            # Step 6: Layout & Lettering (Per Scene for now, or Per Page)
+            # Step 8: Layout & Lettering (Per Scene for now, or Per Page)
             logger.info(f"📐 Assembling Scene {scene.id}...")
-            # Note: layout_engine takes a list of panels and returns panels with layout metadata
             scene_panels = layout_engine.run(scene_plan.panels)
             
-            # Lettering adds text to the images (Parallelized for speed)
+            # Lettering adds text to the images
             lettering_tasks = []
             with ThreadPoolExecutor(max_workers=min(4, len(scene_panels))) as executor:
                 for panel in scene_panels:
@@ -262,7 +293,7 @@ def main():
                 if final_image_path:
                     state.finished_pages.append(final_image_path)
             
-            # Save Checkpoint after each scene (Thread pool manages this in background)
+            # Save Checkpoint after each scene
             state.last_scene_id = scene.id
             checkpoint_mgr.save_checkpoint(state)
         

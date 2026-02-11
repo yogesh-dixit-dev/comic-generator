@@ -179,7 +179,25 @@ class LLMInterface:
                         time.sleep(sleep_time)
                     continue
         
-        raise last_error
+    def unload_model(self):
+        """
+        Forcefully unloads the model from Ollama VRAM by setting keep_alive to 0.
+        """
+        if "ollama" in self.model_name or "local" in self.model_name:
+            import requests
+            try:
+                logger.info(f"📤 Unloading model {self.model_name} from Ollama VRAM...")
+                # Ollama API supports 'keep_alive': 0 to unload
+                # We use a dummy request to trigger the unload logic
+                litellm.completion(
+                    model=self.model_name,
+                    messages=[{"role": "user", "content": "unload"}],
+                    keep_alive=0,
+                    max_tokens=1
+                )
+                logger.info("✅ Model unload signal sent.")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to unload model: {e}")
 
     def generate_text(self, prompt: str, system_prompt: str = "You are a helpful assistant.") -> str:
         """
