@@ -22,31 +22,37 @@ class TestPromptCompression(unittest.TestCase):
         self.assertIn("Quiet", prompt)
 
     def test_long_prompt_compression(self):
-        """Verify that very long prompts are compressed to stay near the token limit (70 tokens * 4 = 280 chars)."""
+        """Verify that prompts within 225 tokens are NOT truncated, but extreme ones ARE."""
         panel = Panel(
             id=2,
-            description="A complex scene with many details and backgrounds",
-            characters_present=["CharacterA", "CharacterB"],
+            description="A complex scene",
+            characters_present=["CharacterA"],
             camera_angle="Wide shot",
             lighting="Dramatic shadows",
             dialogue=[]
         )
-        # Create very long descriptions
-        long_desc = "This is an extremely long and detailed description of a character that includes many unnecessary details about their clothing, hair color, eye shape, and the way they stand in the sunlight which should definitely trigger truncation."
+        # 800 characters - should stay within 225 tokens (~900 chars)
+        long_desc = "This is a detailed description" * 20 
         characters = [
-            Character(name="CharacterA", description=long_desc, personality="Very complex and layered personality that takes many words to describe", pronouns="They/Them"),
-            Character(name="CharacterB", description=long_desc, personality="Another very complex personality that adds to the token count significantly", pronouns="They/Them")
+            Character(name="CharacterA", description=long_desc, personality="Very layered personality", pronouns="They/Them")
         ]
         
         prompt = self.manager.process(panel, characters)
+        # Should NOT be truncated
+        self.assertIn("Very layered personality", prompt)
+        self.assertLessEqual(len(prompt), 1000)
+
+    def test_extreme_prompt_compression(self):
+        """Verify that prompts exceeding 225 tokens are truncated."""
+        panel = Panel(id=3, description="Extreme scene", characters_present=["X"], dialogue=[])
+        # 1200+ characters - should definitely trigger truncation
+        extreme_desc = "unnecessary detail " * 100
+        characters = [Character(name="X", description=extreme_desc, personality="Complex", pronouns="It")]
         
-        # Heuristic check: length should be around 280-300 chars
-        self.assertLessEqual(len(prompt), 320) 
-        self.assertIn("CharacterA", prompt)
-        self.assertIn("CharacterB", prompt)
-        self.assertIn("Wide shot", prompt)
-        # Verify personality was likely dropped or description truncated
-        self.assertNotIn("layered personality", prompt)
+        prompt = self.manager.process(panel, characters)
+        # Should be truncated
+        self.assertLessEqual(len(prompt), 1000) # Our char_limit is 225 * 4 = 900, with some margin
+        self.assertIn("...", prompt)
 
 if __name__ == "__main__":
     unittest.main()
