@@ -63,10 +63,12 @@ class DiffusersImageGenerator(ImageGeneratorInterface):
                 use_safetensors=True, 
                 variant="fp16"
             )
-            # Memory Stability for T4 (16GB): Use CPU offload to prevent OOM
-            # and move VAE to float32 to fix precision issues/deprecation warnings.
-            self.pipe.enable_model_cpu_offload()
-            self.pipe.vae.to(dtype=torch.float32)
+            # Extreme Memory Stability for T4 (16GB) share with Ollama: 
+            # Sequential offload is slower but reduces VRAM usage to ~2GB.
+            self.pipe.enable_sequential_cpu_offload()
+            
+            # NOTE: We keep VAE in float16 (pipeline default) to match UNet latents 
+            # and avoid "Half vs Float" type mismatch errors.
             
             # Additional decoder optimizations to prevent hangs and OOM at final step
             self.pipe.enable_vae_tiling()
