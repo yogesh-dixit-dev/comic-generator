@@ -63,13 +63,15 @@ class DiffusersImageGenerator(ImageGeneratorInterface):
                 use_safetensors=True, 
                 variant="fp16"
             )
-            self.pipe.to(device)
+            # Memory Stability for T4 (16GB): Use CPU offload to prevent OOM
+            # and move VAE to float32 to fix precision issues/deprecation warnings.
+            self.pipe.enable_model_cpu_offload()
+            self.pipe.vae.to(dtype=torch.float32)
             
-            # Optimization for T4 16GB: Use VAE tiling/slicing instead of CPU offload
-            # This prevents the "hang" during the final decoding step after 100% denoising.
-            # NOTE: We keep VAE in float16 (pipeline default) to match UNet latents and avoid type mismatch errors.
+            # Additional decoder optimizations to prevent hangs and OOM at final step
             self.pipe.enable_vae_tiling()
             self.pipe.enable_vae_slicing()
+            self.pipe.enable_attention_slicing()
             
             # Speed Optimization: Use faster scheduler for Turbo/Lightning if detected
             if "turbo" in model_id.lower() or "lightning" in model_id.lower():
