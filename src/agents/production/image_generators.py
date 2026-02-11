@@ -64,11 +64,10 @@ class DiffusersImageGenerator(ImageGeneratorInterface):
                 variant="fp16"
             )
             self.pipe.to(device)
-            # Fix upcast_vae deprecation: explicitly move VAE to float32
-            self.pipe.vae.to(dtype=torch.float32)
             
             # Optimization for T4 16GB: Use VAE tiling/slicing instead of CPU offload
             # This prevents the "hang" during the final decoding step after 100% denoising.
+            # NOTE: We keep VAE in float16 (pipeline default) to match UNet latents and avoid type mismatch errors.
             self.pipe.enable_vae_tiling()
             self.pipe.enable_vae_slicing()
             
