@@ -176,6 +176,10 @@ def main():
                 state.last_chunk_index = i
                 state.master_script = consolidator.get_script()
                 checkpoint_mgr.save_checkpoint(state)
+                
+                # Progress Update: Planning - Scripting (0-40%)
+                progress = int(((i + 1) / len(chunks)) * 40)
+                logger.info(f"[PROGRESS] {progress}% - Scripting chunk {i+1}/{len(chunks)} complete.")
             except Exception as e:
                 logger.error(f"❌ Failed to process parallel chunk {i+1}: {e}")
                 if i == 0: raise 
@@ -207,6 +211,7 @@ def main():
             # Save Checkpoint
             state.characters = characters
             checkpoint_mgr.save_checkpoint(state)
+            logger.info("[PROGRESS] 50% - Character design complete.")
 
         # Step 5: Visual Planning Phase (LLM Heavy)
         # We pre-calculate all scene plans BEFORE starting image generation to avoid VRAM competition.
@@ -233,6 +238,11 @@ def main():
 
                 logger.info(f"📋 Planning Scene {scene.id}: {scene.location}...")
                 state.scene_plans[scene.id] = director.run(scene).dict() # Store as dict for serialization
+                
+                # Progress Update: Planning - Visual (50-100%)
+                scenes_processed = len(state.scene_plans)
+                progress = 50 + int((scenes_processed / len(script.scenes)) * 50)
+                logger.info(f"[PROGRESS] {progress}% - visual Planning scene {scenes_processed}/{len(script.scenes)} complete.")
                 
             # Save Checkpoint after planning all scenes
             checkpoint_mgr.save_checkpoint(state)
@@ -319,6 +329,11 @@ def main():
             # Save Checkpoint after each scene
             state.last_scene_id = scene.id
             checkpoint_mgr.save_checkpoint(state)
+            
+            # Progress Update: Drawing (0-100% of Draw phase, but logged for visibility)
+            scenes_drawn = len([s for s in script.scenes if s.id <= state.last_scene_id])
+            progress = int((scenes_drawn / len(script.scenes)) * 100)
+            logger.info(f"[PROGRESS] {progress}% - Drawing scene {scenes_drawn}/{len(script.scenes)} complete.")
         
         # Step 7: Final Comic Packaging
         logger.info("📦 Packaging final comic...")
