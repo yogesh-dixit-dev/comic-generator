@@ -32,6 +32,13 @@ class ComicScript(BaseModel):
     scenes: List[Scene] = Field(..., description="List of scenes in the comic")
     style_guide: Optional[str] = Field(None, description="Overall artistic style description")
 
+class ScenePlan(Scene):
+    """
+    Represents a finalized directorial plan for a scene.
+    Technically identical to a Scene but used for type safety and clarity in production.
+    """
+    pass
+
 class CritiqueResult(BaseModel):
     passed: bool = Field(..., description="Whether the artifact passed the critique")
     feedback: str = Field(..., description="Detailed feedback on issues found")

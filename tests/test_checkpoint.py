@@ -52,6 +52,23 @@ class TestCheckpointSystem(unittest.TestCase):
         self.assertEqual(loaded_state.last_chunk_index, 2)
         self.assertEqual(loaded_state.master_script.title, "Test")
 
+    def test_scene_plans_persistence(self):
+        """Verify that scene plans are preserved through save/load cycle."""
+        test_plan = {"panels": [{"image_prompt": "A robot in a garden"}]}
+        state = PipelineState(
+            input_hash=self.input_hash,
+            scene_plans={1: test_plan}
+        )
+        
+        self.manager.save_checkpoint(state)
+        
+        loaded_state = self.manager.load_checkpoint(self.input_hash)
+        self.assertIsNotNone(loaded_state)
+        # Check both int and string keys as Pydantic/JSON serialization often converts keys to strings
+        self.assertTrue("1" in loaded_state.scene_plans or 1 in loaded_state.scene_plans)
+        plan = loaded_state.scene_plans.get("1") or loaded_state.scene_plans.get(1)
+        self.assertEqual(plan["panels"][0]["image_prompt"], "A robot in a garden")
+
     def test_resume_different_story(self):
         """Verify that a different story doesn't load a mismatched checkpoint."""
         # Save checkpoint for story A

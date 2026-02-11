@@ -117,9 +117,9 @@ def main():
 
             logger.info("✅ Core LLM backend is healthy.")
         else:
-             logger.info("⏭️ Skipping LLM health checks (Independent Drawing Mode).")
-             from src.utils.llm_interface import LLMInterface
-             reasoning_llm = LLMInterface(model_name=args.reasoning_model)
+            logger.info("⏭️ Skipping LLM health checks (Independent Drawing Mode).")
+            from src.utils.llm_interface import LLMInterface
+            reasoning_llm = LLMInterface(model_name=args.reasoning_model)
 
         # Step 1: Input Analysis
         raw_text = input_reader.process(args.input)
@@ -198,8 +198,10 @@ def main():
         
         # Step 3: Critique Script
         critique = script_critique.run(script)
-        if not critique.passed:
+        if critique and not critique.passed:
             logger.warning(f"Script Critique Failed: {critique.feedback}")
+        elif not critique:
+            logger.error("❌ Script critique failed to return a result!")
         
         # Step 4: Character Design
         if state.characters:

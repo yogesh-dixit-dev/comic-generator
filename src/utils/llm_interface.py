@@ -171,6 +171,11 @@ class LLMInterface:
                         time.sleep(sleep_time)
                     continue
         
+        # If we get here, all retries failed
+        if last_error:
+            raise last_error
+        raise ValueError(f"LLM request failed after {max_retries} attempts for unknown reasons.")
+        
     def unload_model(self):
         """
         Forcefully unloads the model from Ollama VRAM by setting keep_alive to 0.
