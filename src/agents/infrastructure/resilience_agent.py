@@ -2,7 +2,7 @@ import logging
 import time
 import functools
 import os
-from typing import Any, Dict, List, Optional, Callable, Type
+from typing import Any, Dict, List, Optional, Callable, Type, Tuple
 from src.core.agent import BaseAgent
 
 logger = logging.getLogger(__name__)
