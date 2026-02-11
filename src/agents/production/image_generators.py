@@ -84,28 +84,26 @@ class DiffusersImageGenerator(ImageGeneratorInterface):
             logger.error(f"Failed to load Diffusers model: {e}")
             raise
 
-    def _get_embeds(self, prompt: str, tokenizer, text_encoder):
-        """Helper to get embeds for a single encoder with chunking support."""
-        # Clean up prompt
+    def _get_embeds(self, prompt: str, tokenizer, text_encoder, num_chunks: Optional[int] = None):
+        """Helper to get embeds for a single encoder with synchronized chunking support."""
         import re
         prompt = re.sub(r'\s+', ' ', prompt).strip()
         
-        # We manually chunk the prompt into groups of 75 tokens (plus BOS/EOS)
-        # However, for 90% of comic prompts, ensuring 225 token limit is the priority.
-        # We'll use a simpler approach: allow truncation but at a much higher limit
-        # if the tokenizer/encoder allows, or just warn.
-        
-        # REAL CHUNKING:
         input_ids = tokenizer(prompt, return_tensors="pt").input_ids[0]
         # Skip BOS/EOS
         input_ids = input_ids[1:-1]
         
-        # Maximum chunks we support (3 * 75 = 225 tokens wrap)
-        max_chunks = 3
         chunk_size = 75
-        
         chunks = [input_ids[i:i + chunk_size] for i in range(0, len(input_ids), chunk_size)]
-        chunks = chunks[:max_chunks]
+        
+        # Ensure we have the requested number of chunks (even if empty)
+        if num_chunks is not None:
+            if len(chunks) < num_chunks:
+                empty_chunk = torch.tensor([], dtype=torch.long)
+                while len(chunks) < num_chunks:
+                    chunks.append(empty_chunk)
+            elif len(chunks) > num_chunks:
+                chunks = chunks[:num_chunks]
         
         all_embeds = []
         all_pooled = []
@@ -129,7 +127,6 @@ class DiffusersImageGenerator(ImageGeneratorInterface):
             
         # Concatenate chunks
         final_embeds = torch.cat(all_embeds, dim=1)
-        # For pooled, we just take the first one or average them
         final_pooled = all_pooled[0] 
         
         return final_embeds, final_pooled
@@ -137,18 +134,27 @@ class DiffusersImageGenerator(ImageGeneratorInterface):
     def _encode_prompt(self, prompt: str, negative_prompt: str = ""):
         """
         Encodes a prompt into embeddings that can be used by the pipeline.
-        Manually chunks for SDXL to bypass CLIP's 77 token limit.
+        Synchronizes chunk count between positive and negative prompts.
         """
+        # 1. Determine how many chunks we need based on the POSITIVE prompt longest tokenization
+        p1_ids = self.pipe.tokenizer(prompt).input_ids
+        p2_ids = self.pipe.tokenizer_2(prompt).input_ids
+        
+        # 75 tokens per chunk (excluding BOS/EOS)
+        max_p_tokens = max(len(p1_ids) - 2, len(p2_ids) - 2)
+        num_chunks = max(1, (max_p_tokens + 74) // 75)
+        num_chunks = min(num_chunks, 3) # Max 225 tokens
+        
+        # 2. Get embeds for both using the SAME num_chunks
         # Encoder 1 (ViT-L/14)
-        p1, _ = self._get_embeds(prompt, self.pipe.tokenizer, self.pipe.text_encoder)
-        n1, _ = self._get_embeds(negative_prompt, self.pipe.tokenizer, self.pipe.text_encoder)
+        p1, _ = self._get_embeds(prompt, self.pipe.tokenizer, self.pipe.text_encoder, num_chunks=num_chunks)
+        n1, _ = self._get_embeds(negative_prompt, self.pipe.tokenizer, self.pipe.text_encoder, num_chunks=num_chunks)
         
         # Encoder 2 (ViT-bigG/14)
-        p2, p_pooled = self._get_embeds(prompt, self.pipe.tokenizer_2, self.pipe.text_encoder_2)
-        n2, n_pooled = self._get_embeds(negative_prompt, self.pipe.tokenizer_2, self.pipe.text_encoder_2)
+        p2, p_pooled = self._get_embeds(prompt, self.pipe.tokenizer_2, self.pipe.text_encoder_2, num_chunks=num_chunks)
+        n2, n_pooled = self._get_embeds(negative_prompt, self.pipe.tokenizer_2, self.pipe.text_encoder_2, num_chunks=num_chunks)
         
-        # Concatenate hidden states from both encoders
-        # SDXL expects them to be concatenated along the last dimension
+        # Concatenate hidden states
         prompt_embeds = torch.cat([p1, p2], dim=-1)
         negative_prompt_embeds = torch.cat([n1, n2], dim=-1)
         
