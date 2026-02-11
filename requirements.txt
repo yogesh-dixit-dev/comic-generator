@@ -11,3 +11,6 @@ diffusers>=0.21.0
 transformers>=4.33.0
 accelerate>=0.23.0
 safetensors>=0.4.0
+fastapi>=0.100.0
+uvicorn>=0.23.0
+python-multipart>=0.0.6
