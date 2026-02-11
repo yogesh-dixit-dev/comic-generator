@@ -205,3 +205,21 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Node / JavaScript
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+.vercel/
+.npm
+/infrastructure/web/dist
+/infrastructure/web/node_modules
+
+# Project specific
+output/
+pipeline.log
+tests_debug.log
+tests_verbose.log
+checkpoint_*.json
