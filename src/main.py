@@ -1,5 +1,10 @@
 import os
 import sys
+
+# Set PyTorch memory allocation strategy to prevent fragmentation.
+# This MUST be set before torch is imported or any CUDA calls are made.
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 import argparse
 import logging
 from concurrent.futures import ThreadPoolExecutor

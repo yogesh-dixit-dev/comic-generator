@@ -182,19 +182,48 @@ class LLMInterface:
         """
         if "ollama" in self.model_name or "local" in self.model_name:
             import requests
+            import json
             try:
-                logger.info(f"📤 Unloading model {self.model_name} from Ollama VRAM...")
                 # Ollama API supports 'keep_alive': 0 to unload
-                # We use a dummy request to trigger the unload logic
-                litellm.completion(
-                    model=self.model_name,
-                    messages=[{"role": "user", "content": "unload"}],
-                    keep_alive=0,
-                    max_tokens=1
-                )
-                logger.info("✅ Model unload signal sent.")
+                hosts = ["localhost", "127.0.0.1"]
+                success = False
+                
+                # Try both the full name (ollama/llama3.1) and the base name (llama3.1)
+                # Some Ollama distributions are picky about the name used to unload.
+                model_names = [self.model_name]
+                if "/" in self.model_name:
+                    model_names.append(self.model_name.split("/")[-1])
+                
+                for host in hosts:
+                    for model_to_unload in model_names:
+                        try:
+                            url = f"http://{host}:11434/api/generate"
+                            payload = {
+                                "model": model_to_unload,
+                                "prompt": "",
+                                "keep_alive": 0,
+                                "stream": False
+                            }
+                            logger.info(f"📤 Sending unload request for {model_to_unload} to {host}...")
+                            response = requests.post(url, json=payload, timeout=5)
+                            if response.status_code == 200:
+                                logger.info(f"✅ Successfully sent unload signal to {host} for {model_to_unload}.")
+                                success = True
+                        except Exception as e:
+                            logger.debug(f"Failed to unload {model_to_unload} via {host}: {e}")
+                    if success: break
+                
+                if not success:
+                    # Final fallback to litellm
+                    import litellm
+                    litellm.completion(
+                        model=self.model_name,
+                        messages=[{"role": "user", "content": "unload"}],
+                        keep_alive=0,
+                        max_tokens=1
+                    )
             except Exception as e:
-                logger.warning(f"⚠️ Failed to unload model: {e}")
+                 logger.error(f"Failed to unload model {self.model_name}: {e}")
 
     def generate_text(self, prompt: str, system_prompt: str = "You are a helpful assistant.") -> str:
         """
