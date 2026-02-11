@@ -7,15 +7,25 @@ class ConsistencyManager(BaseAgent):
         super().__init__(agent_name, config)
         self.style_preset = self.config.get("style_preset", "cinematic, detailed, comic book style")
         self.negative_prompt = self.config.get("negative_prompt", "blurry, low quality, distortion, bad anatomy")
+        self.panel_memory: List[str] = [] # Stores descriptions of previous panels for continuity
+        self.memory_limit = 3 # Only keep the last 3 panels for context to avoid prompt bloat
 
     def process(self, panel: Panel, characters: List[Character], style_guide: Optional[str] = None) -> str:
         """
-        Constructs the final image generation prompt for a panel, enforcing character consistency.
+        Constructs the final image generation prompt for a panel, enforcing character consistency and narrative flow.
         """
         self.logger.info(f"Generating consistent prompt for Panel {panel.id}...")
         
         style = style_guide or self.style_preset
-        base_parts = [style, panel.description]
+        base_parts = [style]
+        
+        # Inject Visual Memory context if available
+        if self.panel_memory:
+            context = "Previous sequence: " + " -> ".join(self.panel_memory)
+            # We add it as a hint, not as the primary subject
+            base_parts.append(f"Follow-up from: {context}")
+
+        base_parts.append(panel.description)
         
         if panel.camera_angle:
             base_parts.append(f"Camera: {panel.camera_angle}")
@@ -43,6 +53,15 @@ class ConsistencyManager(BaseAgent):
         self.logger.info(f"Final Image Prompt: {final_prompt}")
         
         return final_prompt
+
+    def add_to_memory(self, panel_description: str):
+        """
+        Updates the storyboard memory with a new panel description.
+        """
+        self.panel_memory.append(panel_description)
+        if len(self.panel_memory) > self.memory_limit:
+            self.panel_memory.pop(0) # Keep sliding window
+        self.logger.info(f"Updated Visual Memory. Current history depth: {len(self.panel_memory)}")
 
     def _assemble_and_compress(self, base_parts: List[str], char_parts: List[Dict[str, str]], max_tokens: int = 225) -> str:
         """

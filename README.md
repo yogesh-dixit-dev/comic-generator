@@ -40,11 +40,30 @@ A modular, agent-based system for converting text (novels, stories, scripts) int
 
 ## Usage
 
-Run the main pipeline:
-
+### 🚀 Standard Pipeline
+Run the full automated pipeline:
 ```bash
 python src/main.py --input "path/to/your/story.txt"
 ```
+
+### 🎨 Phase 2: Interactive (HITL) Mode
+For maximum control and VRAM efficiency (especially in Colab), use the **Interactive Dashboard**:
+
+1. **Start the Backend Server**:
+   ```bash
+   $env:PYTHONPATH='.'; venv/Scripts/python.exe infrastructure/server/app.py
+   ```
+2. **Start the React Dashboard**:
+   ```bash
+   cd infrastructure/web
+   npm install && npm run dev
+   ```
+3. **Run in Phases**:
+   - **Planning (LLM)**: `python src/main.py --input story.txt --phase plan`
+   - **Drawing (GPU)**: `python src/main.py --input story.txt --phase draw`
+
+> [!TIP]
+> In HITL mode, the pipeline pauses after the **Script** and **Character Design** steps. Open the dashboard at `http://localhost:3000` to review, edit, and approve before the GPU-heavy drawing begins.
 
 ## Architecture
 

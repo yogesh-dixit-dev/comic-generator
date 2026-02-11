@@ -48,6 +48,8 @@ class IllustratorAgent(BaseAgent):
             final_prompt = self.consistency_manager.process(panel, characters, style_guide=style_guide)
             panel.image_prompt = final_prompt
             prompts.append(final_prompt)
+            # Add current panel to visual memory for the next one in the batch
+            self.consistency_manager.add_to_memory(panel.description)
             
         # 2. Call Batch Image Generator
         try:

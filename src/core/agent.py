@@ -16,6 +16,25 @@ class BaseAgent(ABC):
         self.config = config or {}
         self.logger = logging.getLogger(f"Agent.{agent_name}")
 
+    def wait_for_user_approval(self, checkpoint_id: str, step_label: str):
+        """
+        Polls the checkpoint for a 'user_approved' flag for this specific step.
+        Used for Human-in-the-Loop orchestration.
+        """
+        import time
+        from src.utils.checkpoint_manager import CheckpointManager
+        from src.core.storage import LocalStorage
+        
+        mgr = CheckpointManager(LocalStorage())
+        self.logger.info(f"⏸️ Agent {self.name} is waiting for user approval on step: {step_label}...")
+        
+        while True:
+            state = mgr.load_checkpoint(checkpoint_id)
+            if state and state.metadata.get(f"approved_{step_label}"):
+                self.logger.info(f"✅ User approved step: {step_label}. Resuming {self.name}...")
+                break
+            time.sleep(2) # Poll every 2 seconds
+
     def process(self, input_data: Any) -> Any:
         # To be implemented by subclasses
         pass

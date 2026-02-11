@@ -208,6 +208,9 @@ def main():
         elif not critique:
             logger.error("❌ Script critique failed to return a result!")
         
+        # --- HITL: Wait for Script Approval ---
+        script_writer.wait_for_user_approval(input_hash, "script")
+        
         # Step 4: Character Design
         if state.characters:
             characters = state.characters
@@ -216,14 +219,17 @@ def main():
             characters = character_designer.run(script) 
             logger.info(f"👤 Designed {len(characters)} characters.")
             
-            char_critique = character_critique.run(characters)
-            if not char_critique.passed:
-                logger.warning(f"Character Critique Failed: {char_critique.feedback}")
+            char_critique_result = character_critique.run(characters)
+            if not char_critique_result.passed:
+                logger.warning(f"Character Critique Failed: {char_critique_result.feedback}")
             
             # Save Checkpoint
             state.characters = characters
             checkpoint_mgr.save_checkpoint(state)
             logger.info("[PROGRESS] 50% - Character design complete.")
+        
+        # --- HITL: Wait for Character Approval ---
+        character_designer.wait_for_user_approval(input_hash, "characters")
 
         # Step 5: Visual Planning Phase (LLM Heavy)
         # We pre-calculate all scene plans BEFORE starting image generation to avoid VRAM competition.
