@@ -64,6 +64,9 @@ class DiffusersImageGenerator(ImageGeneratorInterface):
                 variant="fp16"
             )
             self.pipe.to(device)
+            # Fix upcast_vae deprecation: explicitly move VAE to float32
+            self.pipe.vae.to(dtype=torch.float32)
+            
             # Enable memory optimizations for Colab T4
             self.pipe.enable_model_cpu_offload() 
             

@@ -40,7 +40,7 @@ class ConsistencyManager(BaseAgent):
                     })
 
         final_prompt = self._assemble_and_compress(base_parts, char_parts)
-        self.logger.debug(f"Final Prompt: {final_prompt}")
+        self.logger.info(f"Final Image Prompt: {final_prompt}")
         
         return final_prompt
 
