@@ -102,19 +102,24 @@ def main():
     # 4. Execution Pipeline
     try:
         # Step 0: Pre-flight Health Checks
-        logger.info("🛡️ Running pre-flight health checks...")
-        from src.utils.llm_interface import LLMInterface
-        reasoning_llm = LLMInterface(model_name=args.reasoning_model)
-        
-        if not reasoning_llm.is_healthy():
-            logger.error("❌ LOCAL LLM SERVICE (Ollama) IS UNREACHABLE!")
-            logger.info("💡 Potential Fixes:")
-            logger.info("   1. Colab: Run '!ollama serve &' in a new cell.")
-            logger.info("   2. Local: Ensure Ollama is running on port 11434.")
-            logger.info("   3. Check: Open http://localhost:11434/ in a browser.")
-            return
+        if args.phase in ["all", "plan"]:
+            logger.info("🛡️ Running pre-flight health checks...")
+            from src.utils.llm_interface import LLMInterface
+            reasoning_llm = LLMInterface(model_name=args.reasoning_model)
+            
+            if not reasoning_llm.is_healthy():
+                logger.error("❌ LOCAL LLM SERVICE (Ollama) IS UNREACHABLE!")
+                logger.info("💡 Potential Fixes:")
+                logger.info("   1. Colab: Run '!ollama serve &' in a new cell.")
+                logger.info("   2. Local: Ensure Ollama is running on port 11434.")
+                logger.info("   3. Check: Open http://localhost:11434/ in a browser.")
+                return
 
-        logger.info("✅ Core LLM backend is healthy.")
+            logger.info("✅ Core LLM backend is healthy.")
+        else:
+             logger.info("⏭️ Skipping LLM health checks (Independent Drawing Mode).")
+             from src.utils.llm_interface import LLMInterface
+             reasoning_llm = LLMInterface(model_name=args.reasoning_model)
 
         # Step 1: Input Analysis
         raw_text = input_reader.process(args.input)
