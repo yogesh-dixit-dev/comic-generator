@@ -202,11 +202,14 @@ def main():
         logger.info(f"✅ Generated Full Script: '{script.title}' with {len(script.scenes)} scenes.")
         
         # Step 3: Critique Script
-        critique = script_critique.run(script)
-        if critique and not critique.passed:
-            logger.warning(f"Script Critique Failed: {critique.feedback}")
-        elif not critique:
-            logger.error("❌ Script critique failed to return a result!")
+        try:
+            critique = script_critique.run(script)
+            if critique and not critique.passed:
+                logger.warning(f"Script Critique Failed: {critique.feedback}")
+            elif not critique:
+                logger.error("❌ Script critique failed to return a result (None). skipping critique.")
+        except Exception as e:
+            logger.warning(f"⚠️ Script critique error ignored to continue pipeline: {e}")
         
         # --- HITL: Wait for Script Approval ---
         script_writer.wait_for_user_approval(input_hash, "script")
@@ -220,8 +223,10 @@ def main():
             logger.info(f"👤 Designed {len(characters)} characters.")
             
             char_critique_result = character_critique.run(characters)
-            if not char_critique_result.passed:
+            if char_critique_result and not char_critique_result.passed:
                 logger.warning(f"Character Critique Failed: {char_critique_result.feedback}")
+            elif not char_critique_result:
+                logger.error("❌ Character critique failed to return a result (None). skipping critique.")
             
             # Save Checkpoint
             state.characters = characters
