@@ -4,7 +4,7 @@ import hashlib
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional, Any, Dict
+from typing import Optional, Any, Dict, List
 from pydantic import ValidationError
 from src.core.checkpoint import PipelineState
 from src.core.storage import StorageInterface, LocalStorage, HuggingFaceStorage
