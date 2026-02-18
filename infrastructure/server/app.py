@@ -51,6 +51,11 @@ async def update_state(input_hash: str, updated_data: Dict[str, Any]):
     checkpoint_mgr.save_checkpoint(new_state)
     return {"status": "success", "state": new_state.dict()}
 
+@app.get("/api/projects")
+async def list_projects():
+    """Lists all available project checkpoints."""
+    return checkpoint_mgr.list_checkpoints()
+
 @app.get("/api/health")
 async def health():
     return {"status": "healthy"}

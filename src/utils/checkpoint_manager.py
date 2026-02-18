@@ -183,3 +183,33 @@ class CheckpointManager:
         if os.path.exists(path):
             os.remove(path)
             logger.info(f"🗑️ Checkpoint {path} cleared.")
+
+    def list_checkpoints(self) -> List[Dict[str, Any]]:
+        """Lists all available checkpoints with summary info."""
+        checkpoints = []
+        if not os.path.exists(self.checkpoint_dir):
+            return []
+            
+        for filename in os.listdir(self.checkpoint_dir):
+            if filename.startswith("checkpoint_") and filename.endswith(".json"):
+                # Extract hash if possible, or just load and check
+                path = os.path.join(self.checkpoint_dir, filename)
+                try:
+                    with open(path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        # We only need a summary for the list view
+                        checkpoints.append({
+                            "input_hash": data.get("input_hash"),
+                            "stage": data.get("stage", "unknown"),
+                            "last_chunk_index": data.get("last_chunk_index", -1),
+                            "scenes_total": len(data.get("master_script", {}).get("scenes", [])) if data.get("master_script") else 0,
+                            "pages_generated": len(data.get("finished_pages", [])),
+                            "timestamp": os.path.getmtime(path),
+                            "name": data.get("metadata", {}).get("project_name", f"Project {data.get('input_hash', '')[:8]}")
+                        })
+                except Exception as e:
+                    logger.warning(f"Failed to parse checkpoint {filename}: {e}")
+        
+        # Sort by timestamp descending
+        checkpoints.sort(key=lambda x: x["timestamp"], reverse=True)
+        return checkpoints
