@@ -1,6 +1,9 @@
 {
   "builds": [
-    { "src": "infrastructure/web/package.json", "use": "@vercel/static-build" }
+    {
+      "src": "infrastructure/web/package.json",
+      "use": "@vercel/static-build"
+    }
   ],
   "outputDirectory": "infrastructure/web/dist",
   "rewrites": [
