@@ -7,7 +7,7 @@ export default defineConfig({
     server: {
         host: true, // Listen on all addresses, including LAN and public
         port: 3000,
-        allowedHosts: 'all',
+        allowedHosts: true,
         proxy: {
             '/api': {
                 target: 'http://localhost:8000',
