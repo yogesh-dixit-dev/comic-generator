@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "install": "npm install --prefix infrastructure/web",
+    "install": "npm ci --prefix infrastructure/web",
     "build": "npm run build --prefix infrastructure/web",
     "dev": "npm run dev --prefix infrastructure/web"
   },
