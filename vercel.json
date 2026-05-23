@@ -1,0 +1,13 @@
+  "outputDirectory": "infrastructure/web/dist",
+  "build": {
+    "env": {},
+    "command": "npm run build"
+  },
+  "functions": {
+    "api/**/*.py": {
+      "runtime": "python3.11"
+    }
+  },
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
