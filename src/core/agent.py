@@ -19,20 +19,45 @@ class BaseAgent(ABC):
     def wait_for_user_approval(self, checkpoint_id: str, step_label: str):
         """
         Polls the checkpoint for a 'user_approved' flag for this specific step.
-        Used for Human-in-the-Loop orchestration.
+        Supports uninterrupted auto-run mode and dynamic play/pause controls.
         """
         import time
         from src.utils.checkpoint_manager import CheckpointManager
         from src.core.storage import LocalStorage
         
         mgr = CheckpointManager(LocalStorage())
+        self.logger.info(f"Checking approval options for step: {step_label}...")
+        
+        # Check current state first
+        state = mgr.load_checkpoint(checkpoint_id)
+        if state:
+            state.metadata["current_step"] = step_label
+            # Auto-run mode goes straight through
+            if state.metadata.get("auto_run", True):
+                state.metadata[f"approved_{step_label}"] = True
+                mgr.save_checkpoint(state)
+                self.logger.info(f"🚀 Auto-run enabled. Automatically proceeding past: {step_label}")
+                return
+            
+            # If not auto-run, make sure the UI knows we are paused here
+            state.metadata[f"approved_{step_label}"] = False
+            mgr.save_checkpoint(state)
+            
         self.logger.info(f"⏸️ Agent {self.name} is waiting for user approval on step: {step_label}...")
         
         while True:
             state = mgr.load_checkpoint(checkpoint_id)
-            if state and state.metadata.get(f"approved_{step_label}"):
-                self.logger.info(f"✅ User approved step: {step_label}. Resuming {self.name}...")
+            if not state:
+                time.sleep(2)
+                continue
+                
+            # Check if user enabled auto-run or explicitly approved this step
+            if state.metadata.get("auto_run", False) or state.metadata.get(f"approved_{step_label}", False):
+                state.metadata[f"approved_{step_label}"] = True
+                mgr.save_checkpoint(state)
+                self.logger.info(f"✅ User approved/resumed step: {step_label}. Resuming {self.name}...")
                 break
+                
             time.sleep(2) # Poll every 2 seconds
 
     def process(self, input_data: Any) -> Any:

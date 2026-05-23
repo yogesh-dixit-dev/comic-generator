@@ -214,6 +214,10 @@ def main():
         # --- HITL: Wait for Script Approval ---
         script_writer.wait_for_user_approval(input_hash, "script")
         
+        # Reload state & master script to absorb any real-time edits made on the dashboard
+        state = checkpoint_mgr.load_checkpoint(input_hash)
+        script = state.master_script
+        
         # Step 4: Character Design
         if state.characters:
             characters = state.characters
@@ -235,6 +239,10 @@ def main():
         
         # --- HITL: Wait for Character Approval ---
         character_designer.wait_for_user_approval(input_hash, "characters")
+        
+        # Reload state & characters to absorb any real-time edits made on the dashboard
+        state = checkpoint_mgr.load_checkpoint(input_hash)
+        characters = state.characters
 
         # Step 5: Visual Planning Phase (LLM Heavy)
         # We pre-calculate all scene plans BEFORE starting image generation to avoid VRAM competition.
@@ -269,6 +277,12 @@ def main():
                 
             # Save Checkpoint after planning all scenes
             checkpoint_mgr.save_checkpoint(state)
+            
+            # --- HITL: Wait for Planning Approval ---
+            director.wait_for_user_approval(input_hash, "planning")
+            
+            # Reload state & scene plans to absorb any directorial changes made on the dashboard
+            state = checkpoint_mgr.load_checkpoint(input_hash)
             
             if args.phase == "plan":
                 logger.info("🏁 Planning Phase Complete. Exiting to free GPU for drawing.")
