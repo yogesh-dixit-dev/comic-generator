@@ -1,12 +1,12 @@
 {
+  "version": 2,
   "builds": [
     {
       "src": "infrastructure/web/package.json",
-      "use": "@vercel/static-build"
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "infrastructure/web/dist"
+      }
     }
-  ],
-  "outputDirectory": "infrastructure/web/dist",
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
