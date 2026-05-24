@@ -1,6 +1,7 @@
 # .vercelignore – exclude backend and Python files from Vercel static deployment
 # Prevent Vercel from bundling large ML libraries
-infrastructure/backend/
+backend/
+server/
 requirements.txt
 *.py
 *.pyc
